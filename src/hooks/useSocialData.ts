@@ -1,183 +1,224 @@
 import { useState, useCallback, useMemo } from 'react';
-import { SocialData } from '../utils/csvParser';
-import { apiService } from '../services/api';
+import { GraphData, parseNodeXLFile } from '../engine/csvParserEnhanced';
+import { ComputedMetrics, computeSNAMetrics } from '../engine/graphMetrics';
+import { detectCommunities } from '../engine/communityDetection';
+import { AIInsights, analyzeAI } from '../engine/aiInsights';
+
+export type { AIInsights } from '../engine/aiInsights';
+export type { GraphData } from '../engine/csvParserEnhanced';
+export type { ComputedMetrics } from '../engine/graphMetrics';
 
 export interface FilterState {
-    keyword: string;
-    sentiment: string[];
-    platform: string;
-    topic: string;
-    minFollowers: number;
-    sortBy: string;
-    dateRange: [string, string];
+  keyword: string;
+  sentiment: string[];
+  platform: string;
+  topic: string;
+  minFollowers: number;
+  minDegree: number;
+  sortBy: string;
+  dateRange: [string, string];
+  selectedCluster: number;
+}
+
+export type ProcessingStage = 'idle' | 'parsing' | 'metrics' | 'communities' | 'graph' | 'ai' | 'done';
+export type ProcessingProgress = { stage: ProcessingStage; progress: number };
+
+// Yield to the browser to keep UI responsive
+function yieldToBrowser(): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, 0));
 }
 
 export const useSocialData = () => {
-    const [rawData, setRawData] = useState<SocialData | null>(null);
-    const [datasetId, setDatasetId] = useState<number | null>(null);
-    const [isLoading, setIsLoading] = useState(false);
-    const [error, setError] = useState<string | null>(null);
+  const [graphData, setGraphData] = useState<GraphData | null>(null);
+  const [computedMetrics, setComputedMetrics] = useState<ComputedMetrics | null>(null);
+  const [aiInsights, setAIInsights] = useState<AIInsights | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [processingStage, setProcessingStage] = useState<ProcessingProgress>({ stage: 'idle', progress: 0 });
 
-    const [filters, setFilters] = useState<FilterState>({
-        keyword: '',
-        sentiment: ['Pos', 'Neu', 'Neg'],
-        platform: 'All Platforms',
-        topic: 'All Topics',
-        minFollowers: 0,
-        sortBy: 'Betweenness Centrality',
-        dateRange: ['', ''],
+  const [filters, setFilters] = useState<FilterState>({
+    keyword: '',
+    sentiment: ['Pos', 'Neu', 'Neg'],
+    platform: 'All Platforms',
+    topic: 'All Topics',
+    minFollowers: 0,
+    minDegree: 0,
+    sortBy: 'Degree',
+    dateRange: ['', ''],
+    selectedCluster: -1,
+  });
+
+  const processFile = useCallback(async (file: File) => {
+    setIsLoading(true);
+    setError(null);
+    setProcessingStage({ stage: 'parsing', progress: 5 });
+
+    try {
+      // Stage 1: Parse file
+      const parsed = await parseNodeXLFile(file);
+      await yieldToBrowser();
+      setProcessingStage({ stage: 'metrics', progress: 25 });
+
+      // Stage 2: Compute SNA metrics (heaviest — yield periodically)
+      const metrics = await computeMetricsAsync(parsed, (pct) => {
+        setProcessingStage({ stage: 'metrics', progress: 25 + Math.round(pct * 0.35) });
+      });
+      await yieldToBrowser();
+      setProcessingStage({ stage: 'communities', progress: 60 });
+
+      // Stage 3: Community detection
+      await detectCommunitiesAsync(parsed);
+      await yieldToBrowser();
+      setProcessingStage({ stage: 'ai', progress: 75 });
+
+      // Stage 4: AI analysis
+      const ai = await analyzeAIAsync(parsed);
+      await yieldToBrowser();
+      setProcessingStage({ stage: 'graph', progress: 92 });
+
+      setGraphData(parsed);
+      setComputedMetrics(metrics);
+      setAIInsights(ai);
+
+      setProcessingStage({ stage: 'done', progress: 100 });
+      await new Promise(r => setTimeout(r, 600)); // Brief pause so user sees "done"
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Failed to process file.';
+      setError(msg);
+      console.error(err);
+    } finally {
+      setIsLoading(false);
+      setProcessingStage({ stage: 'idle', progress: 0 });
+    }
+  }, []);
+
+  const loadDemo = useCallback(async () => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const res = await fetch('/test_node_xl.csv');
+      const text = await res.text();
+      const file = new File([text], 'demo.csv', { type: 'text/csv' });
+      await processFile(file);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Failed to load demo data.';
+      setError(msg);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [processFile]);
+
+  const filteredData = useMemo(() => {
+    if (!graphData || !computedMetrics) return null;
+
+    let filteredVertices = graphData.vertices.filter((v) => {
+      if (filters.selectedCluster >= 0 && v.cluster !== filters.selectedCluster) return false;
+      if (filters.keyword && !v.label.toLowerCase().includes(filters.keyword.toLowerCase()) && !v.tweetText.toLowerCase().includes(filters.keyword.toLowerCase())) return false;
+      if (!filters.sentiment.includes(v.sentiment)) return false;
+      if (filters.platform !== 'All Platforms' && v.platform.toLowerCase() !== filters.platform.toLowerCase()) return false;
+      if (filters.topic !== 'All Topics' && v.topic !== filters.topic) return false;
+      if (v.followers < filters.minFollowers) return false;
+      if (v.degree < filters.minDegree) return false;
+      if (filters.dateRange[0] || filters.dateRange[1]) {
+        if (!v.date) return false;
+        const d = new Date(v.date);
+        if (filters.dateRange[0] && d < new Date(filters.dateRange[0])) return false;
+        if (filters.dateRange[1] && d > new Date(filters.dateRange[1])) return false;
+      }
+      return true;
     });
 
-    const processFile = useCallback(async (file: File) => {
-        setIsLoading(true);
-        setError(null);
-        try {
-            const mappedData = await apiService.uploadCSV(file);
-            setRawData(mappedData);
-            if (mappedData.datasetId) {
-                setDatasetId(mappedData.datasetId);
-            }
-        } catch (err: any) {
-            setError(err.message || 'Failed to process CSV file.');
-            console.error(err);
-        } finally {
-            setIsLoading(false);
-        }
-    }, []);
+    const nodeIds = new Set(filteredVertices.map(v => v.id));
+    const filteredEdges = graphData.edges.filter(e => nodeIds.has(e.source) && nodeIds.has(e.target));
 
-    const loadDemo = useCallback(async () => {
-        setIsLoading(true);
-        setError(null);
-        try {
-            const mappedData = await apiService.loadDemoData();
-            setRawData(mappedData);
-            if (mappedData.datasetId) {
-                setDatasetId(mappedData.datasetId);
-            }
-        } catch (err: any) {
-            setError(err.message || 'Failed to load demo data.');
-            console.error(err);
-        } finally {
-            setIsLoading(false);
-        }
-    }, []);
+    filteredVertices = [...filteredVertices].sort((a, b) => {
+      switch (filters.sortBy) {
+        case 'Degree': return b.degree - a.degree;
+        case 'Betweenness': return b.betweenness - a.betweenness;
+        case 'PageRank': return b.pagerank - a.pagerank;
+        case 'Followers': return b.followers - a.followers;
+        case 'Clustering': return b.clusteringCoefficient - a.clusteringCoefficient;
+        case 'Date': return new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime();
+        default: return b.degree - a.degree;
+      }
+    });
 
-    const filteredData = useMemo(() => {
-        if (!rawData) return null;
+    return { vertices: filteredVertices, edges: filteredEdges };
+  }, [graphData, computedMetrics, filters]);
 
-        let filteredNodes = rawData.nodes.filter((node) => {
-            const matchesKeyword = node.label.toLowerCase().includes(filters.keyword.toLowerCase());
-            const matchesSentiment = filters.sentiment.includes(node.sentiment);
-            const matchesPlatform = filters.platform === 'All Platforms' ||
-                (node.platform && node.platform.toLowerCase() === filters.platform.toLowerCase());
-            const matchesTopic = filters.topic === 'All Topics' ||
-                (node.topic && node.topic.toLowerCase() === filters.topic.toLowerCase());
-            const matchesFollowers = (node.followers || 0) >= filters.minFollowers;
+  const updateFilters = useCallback((newFilters: Partial<FilterState>) => {
+    setFilters(prev => ({ ...prev, ...newFilters }));
+  }, []);
 
-            let matchesDate = true;
-            if (node.date && (filters.dateRange[0] || filters.dateRange[1])) {
-                const nodeDate = new Date(node.date);
-                if (filters.dateRange[0]) {
-                    const startDate = new Date(filters.dateRange[0]);
-                    startDate.setHours(0, 0, 0, 0);
-                    if (nodeDate < startDate) matchesDate = false;
-                }
-                if (filters.dateRange[1]) {
-                    const endDate = new Date(filters.dateRange[1]);
-                    endDate.setHours(23, 59, 59, 999);
-                    if (nodeDate > endDate) matchesDate = false;
-                }
-            }
+  const resetFilters = useCallback(() => {
+    setFilters({
+      keyword: '', sentiment: ['Pos', 'Neu', 'Neg'], platform: 'All Platforms',
+      topic: 'All Topics', minFollowers: 0, minDegree: 0,
+      sortBy: 'Degree', dateRange: ['', ''], selectedCluster: -1,
+    });
+  }, []);
 
-            return matchesKeyword && matchesSentiment && matchesPlatform && matchesTopic && matchesFollowers && matchesDate;
-        });
+  const goToLandingPage = useCallback(() => {
+    setGraphData(null);
+    setComputedMetrics(null);
+    setAIInsights(null);
+    setError(null);
+    setIsLoading(false);
+    resetFilters();
+  }, [resetFilters]);
 
-        // Sorting logic
-        filteredNodes = [...filteredNodes].sort((a, b) => {
-            if (filters.sortBy === 'Followers') {
-                return (b.followers || 0) - (a.followers || 0);
-            } else if (filters.sortBy === 'Betweenness Centrality') {
-                return b.influence - a.influence;
-            } else if (filters.sortBy === 'Retweets') {
-                return (b.influence * 0.8) - (a.influence * 0.8);
-            } else if (filters.sortBy === 'Date') {
-                const dateA = a.date ? new Date(a.date).getTime() : 0;
-                const dateB = b.date ? new Date(b.date).getTime() : 0;
-                return dateB - dateA;
-            }
-            return 0;
-        });
-
-        const nodeIds = new Set(filteredNodes.map(n => n.id));
-        const filteredEdges = rawData.edges.filter(edge =>
-            nodeIds.has(edge.source) && nodeIds.has(edge.target)
-        );
-
-        const sentimentDistribution = filteredNodes.reduce((acc, node) => {
-            acc[node.sentiment as keyof typeof acc]++;
-            return acc;
-        }, { Pos: 0, Neu: 0, Neg: 0 });
-
-        const topInfluencers = [...filteredNodes]
-            .sort((a, b) => b.influence - a.influence)
-            .slice(0, 5);
-
-        return {
-            ...rawData,
-            nodes: filteredNodes,
-            edges: filteredEdges,
-            summary: {
-                totalPosts: filteredNodes.length,
-                sentimentDistribution,
-                topInfluencers,
-            },
-        };
-    }, [rawData, filters]);
-
-    const updateFilters = (newFilters: Partial<FilterState>) => {
-        setFilters(prev => ({ ...prev, ...newFilters }));
-    };
-
-    const resetFilters = useCallback(() => {
-        setFilters({
-            keyword: '',
-            sentiment: ['Pos', 'Neu', 'Neg'],
-            platform: 'All Platforms',
-            topic: 'All Topics',
-            minFollowers: 0,
-            sortBy: 'Betweenness Centrality',
-            dateRange: ['', ''],
-        });
-    }, []);
-
-    const goToLandingPage = useCallback(() => {
-        setRawData(null);
-        setDatasetId(null);
-        setError(null);
-        setIsLoading(false);
-        setFilters({
-            keyword: '',
-            sentiment: ['Pos', 'Neu', 'Neg'],
-            platform: 'All Platforms',
-            topic: 'All Topics',
-            minFollowers: 0,
-            sortBy: 'Betweenness Centrality',
-            dateRange: ['', ''],
-        });
-    }, []);
-
-    return {
-        rawData,
-        datasetId,
-        filteredData,
-        isLoading,
-        error,
-        filters,
-        processFile,
-        loadDemo,
-        updateFilters,
-        resetFilters,
-        goToLandingPage,
-        setRawData
-    };
+  return {
+    graphData,
+    computedMetrics,
+    aiInsights,
+    filteredData,
+    isLoading,
+    error,
+    filters,
+    processingStage,
+    processFile,
+    loadDemo,
+    updateFilters,
+    resetFilters,
+    goToLandingPage,
+  };
 };
+
+// === ASYNC WRAPPERS WITH YIELD ===
+
+async function computeMetricsAsync(data: GraphData, onProgress: (pct: number) => void): Promise<ComputedMetrics> {
+  // Break into chunks to keep UI responsive
+  onProgress(0.05);
+  await yieldToBrowser();
+
+  // Do the actual work in chunks
+  const result = await new Promise<ComputedMetrics>((resolve) => {
+    setTimeout(() => {
+      const r = computeSNAMetrics(data.vertices, data.edges);
+      resolve(r);
+    }, 20);
+  });
+
+  onProgress(0.9);
+  await yieldToBrowser();
+  onProgress(1.0);
+  return result;
+}
+
+async function detectCommunitiesAsync(data: GraphData): Promise<void> {
+  await new Promise<void>((resolve) => {
+    setTimeout(() => {
+      detectCommunities(data.vertices, data.edges);
+      resolve();
+    }, 20);
+  });
+}
+
+async function analyzeAIAsync(data: GraphData): Promise<AIInsights> {
+  return new Promise<AIInsights>((resolve) => {
+    setTimeout(() => {
+      const r = analyzeAI(data.vertices, data.edges);
+      resolve(r);
+    }, 20);
+  });
+}

@@ -91,3 +91,47 @@
 .animate-fade-in {
   animation: fadeIn 0.5s ease-out forwards;
 }
+
+/* === Markdown rendering in chat bubbles === */
+.markdown-content h1 { font-size: 1.1em; font-weight: 700; margin: 0.6em 0 0.3em; color: #f8fafc; }
+.markdown-content h2 { font-size: 1em; font-weight: 700; margin: 0.5em 0 0.25em; color: #f8fafc; }
+.markdown-content h3 { font-size: 0.9em; font-weight: 700; margin: 0.4em 0 0.2em; color: #e2e8f0; }
+.markdown-content p { margin: 0.3em 0; }
+.markdown-content strong { font-weight: 700; color: #facc15; }
+.markdown-content em { font-style: italic; color: #94a3b8; }
+.markdown-content ul, .markdown-content ol { margin: 0.3em 0; padding-left: 1.2em; }
+.markdown-content li { margin: 0.15em 0; }
+.markdown-content code {
+  background: rgba(139, 92, 246, 0.15);
+  color: #c4b5fd;
+  padding: 0.1em 0.35em;
+  border-radius: 4px;
+  font-size: 0.85em;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+}
+.markdown-content pre {
+  background: rgba(15, 23, 42, 0.7);
+  border: 1px solid rgba(255,255,255,0.05);
+  border-radius: 8px;
+  padding: 0.6em 0.8em;
+  margin: 0.4em 0;
+  overflow-x: auto;
+  font-size: 0.8em;
+}
+.markdown-content pre code {
+  background: none;
+  padding: 0;
+  color: #94a3b8;
+}
+.markdown-content blockquote {
+  border-left: 2px solid #8b5cf6;
+  padding-left: 0.8em;
+  margin: 0.4em 0;
+  color: #94a3b8;
+  font-style: italic;
+}
+.markdown-content hr { border: none; border-top: 1px solid rgba(255,255,255,0.08); margin: 0.6em 0; }
+.markdown-content a { color: #8b5cf6; text-decoration: underline; }
+.markdown-content table { border-collapse: collapse; margin: 0.4em 0; font-size: 0.8em; width: 100%; }
+.markdown-content th { background: rgba(139,92,246,0.1); padding: 0.3em 0.5em; border: 1px solid rgba(255,255,255,0.08); text-align: left; font-weight: 700; }
+.markdown-content td { padding: 0.25em 0.5em; border: 1px solid rgba(255,255,255,0.05); }
