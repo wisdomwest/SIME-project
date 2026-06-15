@@ -25,6 +25,7 @@ export interface Vertex {
   hashtags: string[];
   isBot: boolean;
   botScore: number;
+  image_url?: string;
 }
 
 export interface Edge {
@@ -69,6 +70,7 @@ const NODEXL_COLUMN_MAP: Record<string, string[]> = {
   hashtags: ['Hashtags', 'Tags', 'Hashtag', 'Topics'],
   platform: ['Platform', 'Source', 'Device', 'App', 'Client'],
   topic: ['Topic', 'Category', 'Theme', 'Subject'],
+  image_url: ['Image File', 'ImageFile', 'Image', 'Avatar', 'Profile Image', 'Profile Image URL'],
 };
 
 function findColumn(headers: string[], key: string): string | null {
@@ -219,6 +221,12 @@ function parseNodeXLWorkbook(workbook: XLSX.WorkBook): GraphData {
     const name = vertexColVal(row, 'Vertex') || vertexColVal(row, 'Label') || vertexColVal(row, 'Name');
     if (!name) continue;
 
+    const rawImg = vertexColVal(row, 'Image File');
+    const cleanImg = rawImg ? rawImg.replace(/\\/g, '/') : '';
+    const image_url = cleanImg && !cleanImg.startsWith('/') && !cleanImg.startsWith('http')
+      ? `/api/simelab/images/${cleanImg}`
+      : cleanImg;
+
     vertexMap.set(name, {
       id: name,
       label: name,
@@ -243,6 +251,7 @@ function parseNodeXLWorkbook(workbook: XLSX.WorkBook): GraphData {
       hashtags: [],
       isBot: false,
       botScore: 0,
+      image_url: image_url || undefined,
     });
   }
 
@@ -335,6 +344,7 @@ function buildGraphFromRows(rows: Record<string, unknown>[], headers: string[]):
   const hashtagsCol = findColumn(headers, 'hashtags');
   const platformCol = findColumn(headers, 'platform');
   const topicCol = findColumn(headers, 'topic');
+  const imageUrlCol = findColumn(headers, 'image_url');
 
   const vertexMap = new Map<string, Vertex>();
   const edges: Edge[] = [];
@@ -348,6 +358,12 @@ function buildGraphFromRows(rows: Record<string, unknown>[], headers: string[]):
 
     if (!vertexMap.has(source)) {
       const tweet = tweetCol ? String(row[tweetCol] || '') : '';
+      const rawImg = imageUrlCol ? String(row[imageUrlCol] || '') : '';
+      const cleanImg = rawImg ? rawImg.replace(/\\/g, '/') : '';
+      const image_url = cleanImg && !cleanImg.startsWith('/') && !cleanImg.startsWith('http')
+        ? `/api/simelab/images/${cleanImg}`
+        : cleanImg;
+
       vertexMap.set(source, {
         id: source,
         label: source,
@@ -370,6 +386,7 @@ function buildGraphFromRows(rows: Record<string, unknown>[], headers: string[]):
         hashtags: hashtagsCol ? extractHashtags(String(row[hashtagsCol] || '')) : extractHashtags(tweet),
         isBot: false,
         botScore: 0,
+        image_url: image_url || undefined,
       });
     }
 

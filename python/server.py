@@ -20,6 +20,31 @@ from typing import Optional
 # Ensure simelab package is importable
 sys.path.insert(0, str(Path(__file__).parent))
 
+def load_env():
+    # Try multiple paths to find .env file
+    paths = [
+        Path(__file__).parent / ".env",
+        Path(__file__).parent.parent / ".env",
+        Path(__file__).parent.parent.parent / ".env",
+        Path.cwd() / ".env",
+    ]
+    for p in paths:
+        if p.exists():
+            print(f"Loading environment from {p}")
+            with open(p, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith("#"):
+                        continue
+                    if "=" in line:
+                        k, v = line.split("=", 1)
+                        k = k.strip()
+                        v = v.strip().strip("'").strip('"')
+                        os.environ[k] = v
+            break
+
+load_env()
+
 from fastapi import FastAPI, UploadFile, File, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
@@ -32,6 +57,9 @@ from simelab.sentiment import SentimentAnalyzer
 from simelab.disinformation import DisinformationAnalyzer
 from simelab.censorship import CensorshipAnalyzer
 from simelab.export import ExportManager
+from simelab.drift import SemanticDriftAnalyzer
+
+from fastapi.staticfiles import StaticFiles
 
 # ─── App Setup ───────────────────────────────────────────────────────────────
 
@@ -48,6 +76,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Mount workspace directory for static images
+app.mount("/api/simelab/images", StaticFiles(directory="/home/west/sime-lab-usiu"), name="images")
 
 # ─── State ───────────────────────────────────────────────────────────────────
 # In-memory analysis cache: dataset_id → {G, meta, fe, sa, da, ca, ha}
@@ -106,6 +137,11 @@ class HashtagResponse(BaseModel):
     artificial_ratio: float
     lifecycle: dict
     authenticity: list
+
+
+class CompareRequest(BaseModel):
+    dataset_id_1: str
+    dataset_id_2: str
 
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -290,10 +326,13 @@ async def get_disinformation(dataset_id: str = Query("default")):
 
     scores_list = []
     for node in da.nodes:
+        node_attrs = da.G.nodes[node]
+        is_verified = bool(node_attrs.get("verified", False) or node_attrs.get("is_blue_verified", False))
         entry = {
             "node": node,
             "disinfo_score": round(da.scores.get(node, 0), 6),
             "risk_level": da.risk_labels.get(node, "clean"),
+            "verified": is_verified,
         }
         if node in da.signals:
             entry.update({k: round(v, 4) for k, v in da.signals[node].items()})
@@ -364,6 +403,89 @@ async def get_hashtags(dataset_id: str = Query("default")):
         "artificial_ratio": round(ha.artificial_ratio(), 4),
         "lifecycle": ha.lifecycle,
         "authenticity": authenticity_list,
+    }
+
+
+@app.get("/api/simelab/llm-config")
+async def get_llm_config():
+    """Get backend-configured LLM provider and key from environment."""
+    nv_key = os.environ.get("NVIDIA_API_KEY")
+    ds_key = os.environ.get("DEEPSEEK_API_KEY")
+    if nv_key:
+        return {"provider": "nvidia-nim", "apiKey": nv_key}
+    elif ds_key:
+        return {"provider": "deepseek", "apiKey": ds_key}
+    return {"provider": "deepseek", "apiKey": ""}
+
+
+@app.get("/api/simelab/drift")
+async def get_semantic_drift(dataset_id: str = Query("default"), api_key: str = Query("")):
+    """Run semantic drift and co-optation analysis on tweet text using LLM."""
+    env_key = os.environ.get("NVIDIA_API_KEY") or os.environ.get("DEEPSEEK_API_KEY")
+    key_to_use = api_key or env_key
+    if not key_to_use:
+        raise HTTPException(400, "API key is required. Set it in settings or in the backend .env file.")
+
+    state = _get_analysis(dataset_id)
+    filepath = state["filepath"]
+
+    try:
+        analyzer = SemanticDriftAnalyzer(filepath)
+        result = analyzer.analyze(api_key=key_to_use)
+        return result
+    except Exception as e:
+        raise HTTPException(500, f"Semantic drift analysis failed: {str(e)}")
+
+
+@app.post("/api/simelab/compare")
+async def compare_datasets(req: CompareRequest):
+    """Compare two snapshots to find potential censorship (disappeared critical nodes)."""
+    try:
+        state1 = _get_analysis(req.dataset_id_1)
+        state2 = _get_analysis(req.dataset_id_2)
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        raise HTTPException(400, f"Failed to retrieve datasets: {str(e)}")
+
+    G1 = state1["G"]
+    G2 = state2["G"]
+    ca1 = state1["ca"]
+
+    # disappeared nodes
+    nodes_before = set(G1.nodes())
+    nodes_after = set(G2.nodes())
+    disappeared = nodes_before - nodes_after
+
+    results = []
+    for node in disappeared:
+        si = ca1.structural_impact(node)
+        cb = ca1.betweenness.get(node, 0.0)
+        
+        # Calculate degree in G1
+        if G1.is_directed():
+            deg = G1.in_degree(node) + G1.out_degree(node)
+        else:
+            deg = G1.degree(node)
+            
+        display_name = G1.nodes[node].get("display_name", "")
+
+        results.append({
+            "node": node,
+            "display_name": display_name,
+            "si_score": round(si, 6),
+            "betweenness": round(cb, 6),
+            "degree": deg,
+        })
+
+    # Rank by SI descending
+    results.sort(key=lambda x: x["si_score"], reverse=True)
+
+    return {
+        "dataset_id_1": req.dataset_id_1,
+        "dataset_id_2": req.dataset_id_2,
+        "disappeared_count": len(disappeared),
+        "disappeared_critical_nodes": results,
     }
 
 

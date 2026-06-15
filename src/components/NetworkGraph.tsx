@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { Vertex, Edge } from '../engine/csvParserEnhanced';
-import { Loader2, ZoomIn } from 'lucide-react';
+import { Loader2, ZoomIn, Play, Pause, RotateCcw } from 'lucide-react';
 
 interface NetworkGraphProps {
   vertices: Vertex[];
@@ -25,6 +25,74 @@ const NetworkGraph: React.FC<NetworkGraphProps> = ({ vertices, edges, onNodeSele
   const [isRendering, setIsRendering] = useState(false);
   const [showFullGraph, setShowFullGraph] = useState(false);
   const mountedRef = useRef(true);
+
+  const edgeTimestamps = React.useMemo(() => {
+    const times = edges
+      .map(e => e.date ? new Date(e.date).getTime() : 0)
+      .filter(t => t > 0 && !isNaN(t));
+    return Array.from(new Set(times)).sort((a, b) => a - b);
+  }, [edges]);
+
+  const [sliderIndex, setSliderIndex] = useState<number>(0);
+  const [isPlaying, setIsPlaying] = useState(false);
+
+  useEffect(() => {
+    if (edgeTimestamps.length > 0) {
+      setSliderIndex(edgeTimestamps.length - 1);
+    }
+  }, [edgeTimestamps]);
+
+  useEffect(() => {
+    if (!isPlaying || edgeTimestamps.length === 0) return;
+
+    const timer = setInterval(() => {
+      setSliderIndex((prev) => {
+        if (prev >= edgeTimestamps.length - 1) {
+          setIsPlaying(false);
+          return prev;
+        }
+        return prev + 1;
+      });
+    }, 150);
+
+    return () => clearInterval(timer);
+  }, [isPlaying, edgeTimestamps]);
+
+  useEffect(() => {
+    const cy = cyRef.current;
+    if (!cy || edgeTimestamps.length === 0) return;
+
+    const threshold = edgeTimestamps[sliderIndex];
+
+    cy.batch(() => {
+      cy.edges().forEach((edge: any) => {
+        const edgeTime = edge.data('time') || 0;
+        if (edgeTime > threshold) {
+          edge.style('display', 'none');
+        } else {
+          edge.style('display', 'element');
+        }
+      });
+
+      cy.nodes().forEach((node: any) => {
+        const connectedEdges = node.connectedEdges();
+        if (connectedEdges.length === 0) {
+          node.style('display', 'element');
+          return;
+        }
+        const hasVisibleEdge = connectedEdges.some((edge: any) => {
+          const edgeTime = edge.data('time') || 0;
+          return edgeTime <= threshold;
+        });
+
+        if (!hasVisibleEdge) {
+          node.style('display', 'none');
+        } else {
+          node.style('display', 'element');
+        }
+      });
+    });
+  }, [sliderIndex, edgeTimestamps]);
 
   const effectiveLimit = showFullGraph ? MAX_RENDER_NODES * 4 : MAX_RENDER_NODES;
 
@@ -83,10 +151,16 @@ const NetworkGraph: React.FC<NetworkGraphProps> = ({ vertices, edges, onNodeSele
             sentiment: v.sentiment,
             size: nodeSize(v.degree),
             color: CLUSTER_COLORS[(v.cluster >= 0 ? v.cluster : 0) % CLUSTER_COLORS.length],
+            image_url: v.image_url || '',
           },
         })),
         ...filteredEdges.map(e => ({
-          data: { id: `${e.source}|||${e.target}`, source: e.source, target: e.target },
+          data: {
+            id: `${e.source}|||${e.target}`,
+            source: e.source,
+            target: e.target,
+            time: e.date ? new Date(e.date).getTime() : 0,
+          },
         })),
       ];
 
@@ -108,6 +182,15 @@ const NetworkGraph: React.FC<NetworkGraphProps> = ({ vertices, edges, onNodeSele
               'text-margin-y': 2,
               'border-width': 0.5,
               'border-color': '#0f172a',
+              'background-image': (node: any) => {
+                const img = node.data('image_url');
+                if (img) {
+                  const clean = img.replace(/\\/g, '/');
+                  return clean.startsWith('http') || clean.startsWith('/') ? clean : `/api/simelab/images/${clean}`;
+                }
+                return 'none';
+              },
+              'background-fit': 'cover',
             },
           },
           {
@@ -208,6 +291,49 @@ const NetworkGraph: React.FC<NetworkGraphProps> = ({ vertices, edges, onNodeSele
       {displayVertices.length === 0 && !isRendering && (
         <div className="absolute inset-0 flex items-center justify-center text-text-muted text-sm">
           Upload data to visualize the network graph
+        </div>
+      )}
+
+      {/* Timeline Replay Control */}
+      {isReady && edgeTimestamps.length > 0 && (
+        <div className="absolute bottom-12 left-3 right-3 bg-[#0a0f1e]/90 border border-white/10 rounded-xl p-3 space-y-2 z-10">
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setIsPlaying(!isPlaying)}
+                className="p-1.5 bg-[#facc15] hover:bg-yellow-400 text-[#050a14] rounded-lg transition-colors"
+                title={isPlaying ? "Pause replay" : "Play replay"}
+              >
+                {isPlaying ? <Pause size={14} /> : <Play size={14} />}
+              </button>
+              <button
+                onClick={() => {
+                  setIsPlaying(false);
+                  setSliderIndex(0);
+                }}
+                className="p-1.5 bg-white/5 hover:bg-white/10 text-white rounded-lg transition-colors"
+                title="Restart"
+              >
+                <RotateCcw size={14} />
+              </button>
+            </div>
+            <div className="flex-1">
+              <input
+                type="range"
+                min={0}
+                max={edgeTimestamps.length - 1}
+                value={sliderIndex}
+                onChange={(e) => {
+                  setIsPlaying(false);
+                  setSliderIndex(parseInt(e.target.value));
+                }}
+                className="w-full accent-[#facc15] bg-white/10 rounded-lg appearance-none h-1 cursor-pointer"
+              />
+            </div>
+            <div className="text-[10px] font-mono text-white whitespace-nowrap bg-white/5 px-2 py-1 rounded">
+              {edgeTimestamps[sliderIndex] ? new Date(edgeTimestamps[sliderIndex]).toLocaleString() : ''}
+            </div>
+          </div>
         </div>
       )}
 

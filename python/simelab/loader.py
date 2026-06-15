@@ -342,6 +342,12 @@ def attach_vertex_attributes(G: nx.DiGraph, vertices_df: pd.DataFrame) -> nx.DiG
                         # Boolean-ish fields
                         val = str(val).strip().lower() in ("true", "yes", "1", "verified")
 
+                    if attr_name == "image_url" and isinstance(val, str) and val:
+                        clean = val.replace('\\', '/')
+                        # Prepend static route if not already absolute/prefixed
+                        if not clean.startswith('/') and not clean.startswith('http'):
+                            val = f"/api/simelab/images/{clean}"
+
                     G.nodes[username][attr_name] = val
 
     return G

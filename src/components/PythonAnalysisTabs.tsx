@@ -11,11 +11,12 @@
 import React, { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
 import {
-  MessageCircle, AlertTriangle, Hash, Shield, Loader2, Zap, Download,
+  MessageCircle, AlertTriangle, Hash, Shield, Loader2, Zap, Download, Brain, ChevronRight,
 } from 'lucide-react';
 import {
-  getSentiment, getDisinformation, getHashtags, getCensorship,
-  SentimentData, DisinfoData, HashtagData, CensorshipData,
+  getSentiment, getDisinformation, getHashtags, getCensorship, getSemanticDrift,
+  compareDatasets, getHealth,
+  SentimentData, DisinfoData, HashtagData, CensorshipData, DriftData, ComparisonData,
 } from '../services/pythonApi';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -37,8 +38,30 @@ const PythonAnalysisTabs: React.FC<PythonAnalysisTabsProps> = ({
   const [disinfo, setDisinfo] = useState<DisinfoData | null>(null);
   const [hashtags, setHashtags] = useState<HashtagData | null>(null);
   const [censorship, setCensorship] = useState<CensorshipData | null>(null);
+  const [drift, setDrift] = useState<DriftData | null>(null);
+  const [driftLoading, setDriftLoading] = useState(false);
+  const [driftError, setDriftError] = useState<string | null>(null);
   const [loadState, setLoadState] = useState<LoadingState>('idle');
   const [error, setError] = useState<string | null>(null);
+
+  const handleRunDrift = async () => {
+    const key = localStorage.getItem('simelab_llm_key');
+    if (!key) {
+      setDriftError('No API key configured. Set your DeepSeek API key in platform settings.');
+      return;
+    }
+    setDriftLoading(true);
+    setDriftError(null);
+    try {
+      const data = await getSemanticDrift(datasetId, key);
+      setDrift(data);
+    } catch (err: any) {
+      setDriftError(err.message || 'Failed to run DeepSeek semantic analysis.');
+      console.error(err);
+    } finally {
+      setDriftLoading(false);
+    }
+  };
 
   // Load all analyses when component mounts
   useEffect(() => {
@@ -96,6 +119,7 @@ const PythonAnalysisTabs: React.FC<PythonAnalysisTabsProps> = ({
   const tabs = [
     { id: 'pysentiment', label: 'Sentiment', icon: MessageCircle, count: sentiment?.labels?.length },
     { id: 'pydisinfo', label: 'Disinfo', icon: AlertTriangle, count: disinfo?.scores?.length },
+    { id: 'pydrift', label: 'Drift (AI)', icon: Brain },
     { id: 'pyhashtags', label: 'Hashtags', icon: Hash, count: hashtags?.hashtag_count },
     { id: 'pycensorship', label: 'Censorship', icon: Shield, count: censorship?.structural_holes?.length },
   ];
@@ -128,11 +152,22 @@ const PythonAnalysisTabs: React.FC<PythonAnalysisTabsProps> = ({
       {/* DISINFORMATION TAB */}
       {activeTab === 'pydisinfo' && disinfo && <DisinfoView data={disinfo} />}
 
+      {/* DRIFT TAB */}
+      {activeTab === 'pydrift' && (
+        <DriftView
+          datasetId={datasetId}
+          data={drift}
+          loading={driftLoading}
+          error={driftError}
+          onAnalyze={handleRunDrift}
+        />
+      )}
+
       {/* HASHTAGS TAB */}
       {activeTab === 'pyhashtags' && hashtags && <HashtagView data={hashtags} />}
 
       {/* CENSORSHIP TAB */}
-      {activeTab === 'pycensorship' && censorship && <CensorshipView data={censorship} />}
+      {activeTab === 'pycensorship' && censorship && <CensorshipView data={censorship} currentDatasetId={datasetId} />}
     </div>
   );
 };
@@ -249,6 +284,26 @@ const DisinfoView: React.FC<{ data: DisinfoData }> = ({ data }) => {
   const total = data.risk_distribution.clean + data.risk_distribution.suspicious + data.risk_distribution.likely_disinfo;
   const top10 = data.scores.slice(0, 10);
 
+  const verifiedScores = data.scores.filter(s => s.verified);
+  const unverifiedScores = data.scores.filter(s => !s.verified);
+
+  const verifiedAvg = verifiedScores.length
+    ? verifiedScores.reduce((acc, s) => acc + s.disinfo_score, 0) / verifiedScores.length
+    : 0;
+  const unverifiedAvg = unverifiedScores.length
+    ? unverifiedScores.reduce((acc, s) => acc + s.disinfo_score, 0) / unverifiedScores.length
+    : 0;
+
+  const verifiedSuspicious = verifiedScores.filter(s => s.risk_level !== 'clean').length;
+  const unverifiedSuspicious = unverifiedScores.filter(s => s.risk_level !== 'clean').length;
+
+  const verifiedSuspiciousRatio = verifiedScores.length
+    ? verifiedSuspicious / verifiedScores.length
+    : 0;
+  const unverifiedSuspiciousRatio = unverifiedScores.length
+    ? unverifiedSuspicious / unverifiedScores.length
+    : 0;
+
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-2">
@@ -286,12 +341,74 @@ const DisinfoView: React.FC<{ data: DisinfoData }> = ({ data }) => {
                   animate={{ width: `${(item.count / Math.max(total, 1)) * 100}%` }}
                   transition={{ duration: 0.8, ease: 'easeOut' }}
                   className={`h-full rounded-full ${item.color}`}
-                />
+				/>
               </div>
             </div>
           ))}
         </div>
       </div>
+
+      {/* Verification Audit */}
+      {verifiedScores.length > 0 && (
+        <div className="bg-[#0f172a]/30 border border-white/5 rounded-2xl p-6 space-y-4">
+          <h3 className="text-sm font-bold tracking-tight text-white flex items-center gap-2">
+            🛡️ Verification Audit (Paid Badges vs Organic Accounts)
+          </h3>
+          <p className="text-xs text-text-secondary">
+            Comparing the disinformation risk metrics of Twitter/X Verified accounts (Blue badges) against standard Unverified accounts.
+          </p>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Average Disinfo Score Comparison */}
+            <div className="bg-white/[0.02] border border-white/5 rounded-xl p-4 space-y-3">
+              <h4 className="text-xs font-bold text-text-muted uppercase tracking-wider">Average Disinfo Score</h4>
+              <div className="flex justify-between items-baseline">
+                <div>
+                  <span className="text-2xl font-black text-[#3b82f6]">{verifiedAvg.toFixed(4)}</span>
+                  <span className="text-[10px] text-text-muted block mt-0.5">Verified ({verifiedScores.length} accounts)</span>
+                </div>
+                <div className="text-right">
+                  <span className="text-2xl font-black text-text-secondary">{unverifiedAvg.toFixed(4)}</span>
+                  <span className="text-[10px] text-text-muted block mt-0.5">Unverified ({unverifiedScores.length} accounts)</span>
+                </div>
+              </div>
+              {verifiedAvg > unverifiedAvg ? (
+                <div className="text-[10px] text-red-400 font-bold bg-red-500/10 border border-red-500/20 px-2 py-1 rounded">
+                  ⚠ Verified accounts show HIGHER average disinformation score than unverified accounts (+{((verifiedAvg - unverifiedAvg) / (unverifiedAvg || 1) * 100).toFixed(1)}%).
+                </div>
+              ) : (
+                <div className="text-[10px] text-green-400 font-bold bg-green-500/10 border border-green-500/20 px-2 py-1 rounded">
+                  ✓ Verified accounts show LOWER average disinformation score than unverified accounts.
+                </div>
+              )}
+            </div>
+
+            {/* Suspicious Ratio Comparison */}
+            <div className="bg-white/[0.02] border border-white/5 rounded-xl p-4 space-y-3">
+              <h4 className="text-xs font-bold text-text-muted uppercase tracking-wider">Suspicious/Disinfo Ratio</h4>
+              <div className="flex justify-between items-baseline">
+                <div>
+                  <span className="text-2xl font-black text-[#facc15]">{Math.round(verifiedSuspiciousRatio * 100)}%</span>
+                  <span className="text-[10px] text-text-muted block mt-0.5">{verifiedSuspicious} / {verifiedScores.length} Verified</span>
+                </div>
+                <div className="text-right">
+                  <span className="text-2xl font-black text-text-secondary">{Math.round(unverifiedSuspiciousRatio * 100)}%</span>
+                  <span className="text-[10px] text-text-muted block mt-0.5">{unverifiedSuspicious} / {unverifiedScores.length} Unverified</span>
+                </div>
+              </div>
+              {verifiedSuspiciousRatio > unverifiedSuspiciousRatio ? (
+                <div className="text-[10px] text-red-400 font-bold bg-red-500/10 border border-red-500/20 px-2 py-1 rounded">
+                  ⚠ Higher percentage of verified accounts flagged as suspicious or likely disinformation.
+                </div>
+              ) : (
+                <div className="text-[10px] text-green-400 font-bold bg-green-500/10 border border-green-500/20 px-2 py-1 rounded">
+                  ✓ Lower percentage of verified accounts flagged as suspicious than unverified.
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Top 10 suspicious */}
       <div className="bg-[#0f172a]/30 border border-white/5 rounded-2xl p-6">
@@ -438,9 +555,52 @@ const HashtagView: React.FC<{ data: HashtagData }> = ({ data }) => {
 
 // ─── Censorship View ────────────────────────────────────────────────────────
 
-const CensorshipView: React.FC<{ data: CensorshipData }> = ({ data }) => {
+const CensorshipView: React.FC<{ data: CensorshipData; currentDatasetId?: string }> = ({ data, currentDatasetId }) => {
   const fragmentingCount = data.structural_holes.filter(h => h.is_fragmenting).length;
   const maxSI = data.structural_holes[0]?.si_score || 0;
+
+  const [datasets, setDatasets] = useState<string[]>([]);
+  const [snapshot1, setSnapshot1] = useState(currentDatasetId || 'default');
+  const [snapshot2, setSnapshot2] = useState('');
+  const [compResult, setCompResult] = useState<ComparisonData | null>(null);
+  const [compLoading, setCompLoading] = useState(false);
+  const [compError, setCompError] = useState<string | null>(null);
+
+  useEffect(() => {
+    getHealth().then(h => {
+      setDatasets(h.loaded_datasets);
+      // Auto-select a second snapshot if available
+      const others = h.loaded_datasets.filter(id => id !== snapshot1);
+      if (others.length > 0 && !snapshot2) {
+        setSnapshot2(others[0]);
+      }
+    }).catch(err => {
+      console.error('Failed to load datasets for comparison:', err);
+    });
+  }, [snapshot1, snapshot2]);
+
+  const handleCompare = async () => {
+    if (!snapshot1 || !snapshot2) {
+      setCompError('Please select two different snapshots to compare.');
+      return;
+    }
+    if (snapshot1 === snapshot2) {
+      setCompError('Select two different datasets to compare.');
+      return;
+    }
+
+    setCompLoading(true);
+    setCompError(null);
+    try {
+      const result = await compareDatasets(snapshot1, snapshot2);
+      setCompResult(result);
+    } catch (err: any) {
+      setCompError(err.message || 'Comparison failed.');
+      console.error(err);
+    } finally {
+      setCompLoading(false);
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -520,6 +680,125 @@ const CensorshipView: React.FC<{ data: CensorshipData }> = ({ data }) => {
         </div>
       </div>
 
+      {/* Censorship Diffing comparator */}
+      <div className="bg-[#0f172a]/30 border border-white/5 rounded-2xl p-6 space-y-4">
+        <h3 className="text-sm font-bold tracking-tight text-white flex items-center gap-2">
+          🕵️ Censorship Snapshot Diffing (Temporal Suspension Finder)
+        </h3>
+        <p className="text-xs text-text-secondary">
+          Compare consecutive snapshots (e.g. Day 4 vs Day 5) to auto-detect critical bridge accounts that were active in Snapshot 1 but disappeared in Snapshot 2. This suggests targeted account suspensions or deletions.
+        </p>
+
+        <div className="flex flex-col sm:flex-row items-end gap-4 bg-white/[0.02] p-4 rounded-xl border border-white/5">
+          <div className="flex-1 space-y-1">
+            <label className="text-[10px] font-bold text-text-muted uppercase px-1">Base Snapshot (T1)</label>
+            <div className="relative">
+              <select
+                value={snapshot1}
+                onChange={(e) => setSnapshot1(e.target.value)}
+                className="w-full bg-[#0a1120] border border-white/10 rounded-lg py-2.5 px-3 text-xs text-white focus:outline-none appearance-none"
+              >
+                <option value="">Select T1...</option>
+                {datasets.map(id => (
+                  <option key={id} value={id}>{id}</option>
+                ))}
+              </select>
+              <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-text-muted">
+                <ChevronRight className="rotate-90" size={14} />
+              </div>
+            </div>
+          </div>
+
+          <div className="flex-1 space-y-1">
+            <label className="text-[10px] font-bold text-text-muted uppercase px-1">Comparison Snapshot (T2)</label>
+            <div className="relative">
+              <select
+                value={snapshot2}
+                onChange={(e) => setSnapshot2(e.target.value)}
+                className="w-full bg-[#0a1120] border border-white/10 rounded-lg py-2.5 px-3 text-xs text-white focus:outline-none appearance-none"
+              >
+                <option value="">Select T2...</option>
+                {datasets.map(id => (
+                  <option key={id} value={id}>{id}</option>
+                ))}
+              </select>
+              <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-text-muted">
+                <ChevronRight className="rotate-90" size={14} />
+              </div>
+            </div>
+          </div>
+
+          <button
+            onClick={handleCompare}
+            disabled={compLoading}
+            className="px-6 py-2.5 bg-[#facc15] hover:bg-yellow-400 disabled:bg-white/5 disabled:text-text-muted text-[#050a14] rounded-lg text-xs font-bold transition-all whitespace-nowrap"
+          >
+            {compLoading ? 'Comparing...' : 'Compare Snapshots'}
+          </button>
+        </div>
+
+        {compError && (
+          <div className="text-xs text-red-400 font-bold bg-red-500/10 border border-red-500/20 px-3 py-2 rounded-xl">
+            {compError}
+          </div>
+        )}
+
+        {compResult && (
+          <div className="space-y-4 border-t border-white/5 pt-4">
+            <div className="flex justify-between items-center">
+              <h4 className="text-xs font-bold text-[#facc15]">
+                Disappeared Accounts Analysis ({compResult.disappeared_count} accounts disappeared)
+              </h4>
+              <span className="text-[10px] text-text-muted uppercase tracking-widest">
+                Sorted by Structural Impact (SI)
+              </span>
+            </div>
+
+            {compResult.disappeared_critical_nodes.length === 0 ? (
+              <p className="text-xs text-text-secondary py-4 text-center bg-white/[0.01] rounded-xl border border-dashed border-white/5">
+                No accounts disappeared between these snapshots.
+              </p>
+            ) : (
+              <div className="overflow-x-auto max-h-64 overflow-y-auto">
+                <table className="w-full text-xs">
+                  <thead className="sticky top-0 bg-[#0f172a]/95">
+                    <tr className="text-text-muted uppercase tracking-wider">
+                      <th className="text-left py-2 px-3">Disappeared Account</th>
+                      <th className="text-right py-2 px-3">Structural Impact (SI)</th>
+                      <th className="text-right py-2 px-3">Betweenness (T1)</th>
+                      <th className="text-right py-2 px-3">Degree (T1)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {compResult.disappeared_critical_nodes.slice(0, 15).map((node, i) => (
+                      <tr key={i} className="border-t border-white/5 hover:bg-white/[0.02]">
+                        <td className="py-2 px-3 font-bold text-red-400">
+                          @{node.node}
+                          {node.display_name && (
+                            <span className="text-text-muted font-normal ml-2 text-[10px]">
+                              {node.display_name}
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-2 px-3 text-right font-mono text-white">
+                          {node.si_score.toFixed(6)}
+                        </td>
+                        <td className="py-2 px-3 text-right font-mono text-text-secondary">
+                          {node.betweenness.toFixed(6)}
+                        </td>
+                        <td className="py-2 px-3 text-right font-mono text-text-secondary">
+                          {node.degree}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
       {/* Methodology note */}
       <div className="bg-[#0f172a]/30 border border-white/5 rounded-2xl p-6">
         <h3 className="text-sm font-bold tracking-tight mb-3">Methodology</h3>
@@ -567,5 +846,145 @@ const Legend = ({ color, label, count, total, detail }: {
     <p className="text-[9px] text-text-muted ml-6 mt-0.5">{detail}</p>
   </div>
 );
+
+const DriftView: React.FC<{
+  datasetId: string;
+  data: DriftData | null;
+  loading: boolean;
+  error: string | null;
+  onAnalyze: () => void;
+}> = ({ datasetId, data, loading, error, onAnalyze }) => {
+  const apiKey = localStorage.getItem('simelab_llm_key');
+
+  if (!apiKey) {
+    return (
+      <div className="bg-[#0f172a]/30 border border-white/5 rounded-2xl p-10 text-center space-y-4">
+        <Brain className="w-12 h-12 text-text-muted mx-auto opacity-30 animate-pulse" />
+        <h3 className="text-sm font-bold">DeepSeek API Key Required</h3>
+        <p className="text-xs text-text-secondary max-w-sm mx-auto">
+          Semantic drift analysis uses DeepSeek to analyze Swahili, Sheng, and English code-switching. Configure your key in Settings (in top bar) to continue.
+        </p>
+      </div>
+    );
+  }
+
+  if (loading) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20 gap-4">
+        <Loader2 size={32} className="text-[#facc15] animate-spin" />
+        <p className="text-sm text-text-secondary">DeepSeek analyzing narrative evolution...</p>
+        <p className="text-[10px] text-text-muted font-mono">Sorting tweets chronologically · Sampling · Processing Swahili/Sheng features</p>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="bg-[#0f172a]/30 border border-white/5 rounded-2xl p-10 text-center space-y-4">
+        <AlertTriangle className="w-12 h-12 text-red-400 mx-auto opacity-80" />
+        <h3 className="text-sm font-bold text-red-400">Analysis Failed</h3>
+        <p className="text-xs text-text-secondary max-w-sm mx-auto">{error}</p>
+        <button
+          onClick={onAnalyze}
+          className="px-4 py-2 bg-[#facc15] text-[#050a14] rounded-lg text-xs font-bold"
+        >
+          Try Again
+        </button>
+      </div>
+    );
+  }
+
+  if (!data) {
+    return (
+      <div className="bg-[#0f172a]/30 border border-white/5 rounded-2xl p-10 text-center space-y-4">
+        <Brain className="w-12 h-12 text-[#facc15] mx-auto opacity-80 animate-pulse" />
+        <h3 className="text-sm font-bold">Semantic Drift Analysis</h3>
+        <p className="text-xs text-text-secondary max-w-sm mx-auto">
+          Analyze chronological tweet text using DeepSeek to check if the campaign's topic was hijacked or co-opted over time.
+        </p>
+        <button
+          onClick={onAnalyze}
+          className="px-6 py-2.5 bg-[#facc15] text-[#050a14] rounded-lg text-xs font-bold shadow-lg hover:bg-yellow-400 transition-colors"
+        >
+          Run DeepSeek Analysis
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center gap-2">
+        <Brain size={14} className="text-[#facc15]" />
+        <span className="text-[10px] font-black text-[#facc15] uppercase tracking-widest">
+          DeepSeek-Chat Semantic Analysis
+        </span>
+      </div>
+
+      {/* Stats Cards */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <StatCard
+          title="Drift Score"
+          value={data.drift_score.toFixed(2)}
+          subtitle={data.drift_score > 0.4 ? "High drift" : "Low drift"}
+          accent={data.drift_score > 0.4 ? "border-red-500" : "border-green-500"}
+        />
+        <StatCard
+          title="Co-opted / Hijacked?"
+          value={data.is_coopted ? "YES" : "NO"}
+          subtitle={data.is_coopted ? "Narrative captured" : "Organic topic"}
+          accent={data.is_coopted ? "border-red-500" : "border-green-500"}
+        />
+        <StatCard
+          title="Swahili/Sheng tweets"
+          value={`${data.swahili_sheng_count} / ${data.sample_size}`}
+          subtitle={`${Math.round(data.swahili_sheng_count / data.sample_size * 100)}% of sample`}
+          accent="border-[#3b82f6]"
+        />
+        <StatCard
+          title="Tweets Sampled"
+          value={data.total_tweets.toLocaleString()}
+          subtitle={`sample: ${data.sample_size}`}
+          accent="border-[#8b5cf6]"
+        />
+      </div>
+
+      {/* Comparison grid */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        {/* Early Topics */}
+        <div className="bg-[#0f172a]/30 border border-white/5 rounded-2xl p-6">
+          <h3 className="text-sm font-bold tracking-tight mb-4 text-[#10b981] flex items-center gap-2">
+            🌱 Early Topics (Campaign Origin)
+          </h3>
+          <ul className="space-y-2 text-xs text-text-secondary list-disc pl-4">
+            {data.early_topics.map((t, idx) => (
+              <li key={idx} className="hover:text-white transition-colors">{t}</li>
+            ))}
+          </ul>
+        </div>
+
+        {/* Late Topics */}
+        <div className="bg-[#0f172a]/30 border border-white/5 rounded-2xl p-6">
+          <h3 className={`text-sm font-bold tracking-tight mb-4 flex items-center gap-2 ${data.is_coopted ? 'text-red-400' : 'text-blue-400'}`}>
+            {data.is_coopted ? '🕵️ Late Topics (Co-opted Narrative)' : '🔥 Late Topics (Campaign Peak)'}
+          </h3>
+          <ul className="space-y-2 text-xs text-text-secondary list-disc pl-4">
+            {data.late_topics.map((t, idx) => (
+              <li key={idx} className="hover:text-white transition-colors">{t}</li>
+            ))}
+          </ul>
+        </div>
+      </div>
+
+      {/* Detailed Analysis Narrative */}
+      <div className="bg-[#0f172a]/30 border border-white/5 rounded-2xl p-6">
+        <h3 className="text-sm font-bold tracking-tight mb-4">DeepSeek Narrative Assessment</h3>
+        <p className="text-xs text-text-secondary leading-relaxed font-mono whitespace-pre-wrap p-4 bg-[#050a14] border border-white/5 rounded-xl">
+          {data.analysis_text}
+        </p>
+      </div>
+    </div>
+  );
+};
 
 export default PythonAnalysisTabs;

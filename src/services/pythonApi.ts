@@ -54,6 +54,7 @@ export interface DisinfoData {
     network_position_anomaly?: number;
     echo_chamber_index?: number;
     follower_sparse_connectivity?: number;
+    verified?: boolean;
   }>;
 }
 
@@ -89,6 +90,32 @@ export interface HashtagData {
 export interface ExportResult {
   dataset_id: string;
   files: Record<string, string>;
+}
+
+export interface DisappearedNode {
+  node: string;
+  display_name: string;
+  si_score: number;
+  betweenness: number;
+  degree: number;
+}
+
+export interface ComparisonData {
+  dataset_id_1: string;
+  dataset_id_2: string;
+  disappeared_count: number;
+  disappeared_critical_nodes: DisappearedNode[];
+}
+
+export interface DriftData {
+  drift_score: number;
+  is_coopted: boolean;
+  early_topics: string[];
+  late_topics: string[];
+  analysis_text: string;
+  swahili_sheng_count: number;
+  sample_size: number;
+  total_tweets: number;
 }
 
 // ─── API Functions ──────────────────────────────────────────────────────────
@@ -132,6 +159,27 @@ export async function getHashtags(datasetId = 'default'): Promise<HashtagData> {
   return apiFetch(`/hashtags?dataset_id=${encodeURIComponent(datasetId)}`);
 }
 
+export async function getSemanticDrift(datasetId = 'default', apiKey: string): Promise<DriftData> {
+  return apiFetch(`/drift?dataset_id=${encodeURIComponent(datasetId)}&api_key=${encodeURIComponent(apiKey)}`);
+}
+
+export async function compareDatasets(datasetId1: string, datasetId2: string): Promise<ComparisonData> {
+  return apiFetch('/compare', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ dataset_id_1: datasetId1, dataset_id_2: datasetId2 }),
+  });
+}
+
 export async function exportResults(datasetId = 'default', format = 'csv'): Promise<ExportResult> {
   return apiFetch(`/export?dataset_id=${encodeURIComponent(datasetId)}&format=${format}`, { method: 'POST' });
+}
+
+export interface BackendLLMConfig {
+  provider: 'nvidia-nim' | 'deepseek';
+  apiKey: string;
+}
+
+export async function getBackendLLMConfig(): Promise<BackendLLMConfig> {
+  return apiFetch('/llm-config');
 }
