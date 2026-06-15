@@ -1,7 +1,7 @@
 // LLM service supporting NVIDIA NIM and DeepSeek APIs
 // API key stored in localStorage under 'simelab_llm_key' and 'simelab_llm_provider'
 
-export type LLMProvider = 'nvidia-nim' | 'deepseek';
+export type LLMProvider = 'nvidia-nim' | 'deepseek' | 'tokenrouter';
 
 interface LLMConfig {
   provider: LLMProvider;
@@ -12,11 +12,13 @@ interface LLMConfig {
 const DEFAULT_MODELS: Record<LLMProvider, string> = {
   'nvidia-nim': 'meta/llama-3.1-70b-instruct',
   'deepseek': 'deepseek-chat',
+  'tokenrouter': 'MiniMax-M3',
 };
 
 const ENDPOINTS: Record<LLMProvider, string> = {
   'nvidia-nim': '/api/nvidia/v1/chat/completions',
   'deepseek': '/api/deepseek/v1/chat/completions',
+  'tokenrouter': '/api/tokenrouter/v1/chat/completions',
 };
 
 export function getConfig(): LLMConfig | null {

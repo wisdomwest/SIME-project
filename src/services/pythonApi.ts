@@ -176,7 +176,7 @@ export async function exportResults(datasetId = 'default', format = 'csv'): Prom
 }
 
 export interface BackendLLMConfig {
-  provider: 'nvidia-nim' | 'deepseek';
+  provider: 'nvidia-nim' | 'deepseek' | 'tokenrouter';
   apiKey: string;
 }
 

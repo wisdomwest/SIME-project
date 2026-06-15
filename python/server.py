@@ -23,9 +23,9 @@ sys.path.insert(0, str(Path(__file__).parent))
 def load_env():
     # Try multiple paths to find .env file
     paths = [
-        Path(__file__).parent / ".env",
-        Path(__file__).parent.parent / ".env",
         Path(__file__).parent.parent.parent / ".env",
+        Path(__file__).parent.parent / ".env",
+        Path(__file__).parent / ".env",
         Path.cwd() / ".env",
     ]
     for p in paths:
@@ -44,6 +44,30 @@ def load_env():
             break
 
 load_env()
+
+
+def read_env_key(key: str, default: str = "") -> str:
+    paths = [
+        Path(__file__).parent.parent.parent / ".env",
+        Path(__file__).parent.parent / ".env",
+        Path(__file__).parent / ".env",
+        Path.cwd() / ".env",
+    ]
+    for p in paths:
+        if p.exists():
+            try:
+                with open(p, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line or line.startswith("#"):
+                            continue
+                        if "=" in line:
+                            k, v = line.split("=", 1)
+                            if k.strip() == key:
+                                return v.strip().strip("'").strip('"')
+            except Exception:
+                pass
+    return os.environ.get(key, default)
 
 from fastapi import FastAPI, UploadFile, File, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -409,9 +433,12 @@ async def get_hashtags(dataset_id: str = Query("default")):
 @app.get("/api/simelab/llm-config")
 async def get_llm_config():
     """Get backend-configured LLM provider and key from environment."""
-    nv_key = os.environ.get("NVIDIA_API_KEY")
-    ds_key = os.environ.get("DEEPSEEK_API_KEY")
-    if nv_key:
+    nv_key = read_env_key("NVIDIA_API_KEY")
+    ds_key = read_env_key("DEEPSEEK_API_KEY")
+    tr_key = read_env_key("TOKENROUTER_API_KEY")
+    if tr_key:
+        return {"provider": "tokenrouter", "apiKey": tr_key}
+    elif nv_key:
         return {"provider": "nvidia-nim", "apiKey": nv_key}
     elif ds_key:
         return {"provider": "deepseek", "apiKey": ds_key}
@@ -421,7 +448,7 @@ async def get_llm_config():
 @app.get("/api/simelab/drift")
 async def get_semantic_drift(dataset_id: str = Query("default"), api_key: str = Query("")):
     """Run semantic drift and co-optation analysis on tweet text using LLM."""
-    env_key = os.environ.get("NVIDIA_API_KEY") or os.environ.get("DEEPSEEK_API_KEY")
+    env_key = read_env_key("TOKENROUTER_API_KEY") or read_env_key("NVIDIA_API_KEY") or read_env_key("DEEPSEEK_API_KEY")
     key_to_use = api_key or env_key
     if not key_to_use:
         raise HTTPException(400, "API key is required. Set it in settings or in the backend .env file.")

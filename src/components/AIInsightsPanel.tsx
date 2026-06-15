@@ -3,16 +3,29 @@ import { AIInsights } from '../engine/aiInsights';
 import { AlertTriangle, TrendingUp, Hash, Globe, Activity, Sparkles, Loader2, Zap } from 'lucide-react';
 import { getConfig, queryLLM } from '../services/llmService';
 import { ComputedMetrics } from '../engine/engineTypes';
+import { getSentiment, getDisinformation, getCensorship, getHashtags, DriftData } from '../services/pythonApi';
 
 interface AIInsightsPanelProps {
   insights: AIInsights | null;
   computedMetrics?: ComputedMetrics;
+  driftData?: DriftData | null;
 }
 
-function buildLLMContext(metrics: ComputedMetrics, insights: AIInsights | null): string {
+function buildLLMContext(metrics: ComputedMetrics, insights: AIInsights | null, pythonContext: string, drift: DriftData | null | undefined): string {
   const top10 = metrics.topInfluencers.slice(0, 10).map((v, i) =>
     `${i + 1}. @${v.label} — Deg:${v.degree} BC:${v.betweenness.toFixed(3)} PR:${v.pagerank.toFixed(3)} Fol:${v.followers}`
   ).join('\n');
+
+  const driftContext = drift ? `
+
+SEMANTIC DRIFT ANALYSIS (from Drift tab):
+- Drift Score: ${drift.drift_score.toFixed(2)} (${drift.drift_score > 0.4 ? 'HIGH — significant narrative shift' : 'LOW — stable narrative'})
+- Co-opted / Hijacked: ${drift.is_coopted ? 'YES' : 'NO'}
+- Early Campaign Topics: ${drift.early_topics.join('; ')}
+- Late Campaign Topics: ${drift.late_topics.join('; ')}
+- Swahili/Sheng tweets in sample: ${drift.swahili_sheng_count} / ${drift.sample_size}
+- Total tweets analysed: ${drift.total_tweets.toLocaleString()}
+- Analyst Assessment: ${drift.analysis_text.slice(0, 600)}...` : '';
 
   return `NETWORK: ${metrics.totalVertices} accounts, ${metrics.totalEdges} edges, density ${metrics.density.toFixed(4)}, ${metrics.connectedComponents} components, reciprocity ${(metrics.reciprocity*100).toFixed(1)}%
 
@@ -20,11 +33,12 @@ TOP 10:
 ${top10}
 
 ${insights ? `Bot score: ${Math.round(insights.botActivityScore*100)}%, Polarization: ${Math.round(insights.polarizationIndex*100)}%` : ''}
+${pythonContext}${driftContext}
 
 Generate a concise analysis: key patterns, community structure, influencer dynamics, risks, and recommendations. Use bullet points. Include specific account names and numbers. Keep under 400 words.`;
 }
 
-const AIInsightsPanel: React.FC<AIInsightsPanelProps> = ({ insights, computedMetrics }) => {
+const AIInsightsPanel: React.FC<AIInsightsPanelProps> = ({ insights, computedMetrics, driftData }) => {
   const [llmInsights, setLlmInsights] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [llmError, setLlmError] = useState<string | null>(null);
@@ -40,7 +54,38 @@ const AIInsightsPanel: React.FC<AIInsightsPanelProps> = ({ insights, computedMet
     setIsGenerating(true);
     setLlmError(null);
     try {
-      const context = buildLLMContext(computedMetrics, insights);
+      let pythonContext = "";
+      try {
+        const [sentiment, disinfo, censorship, hashtags] = await Promise.all([
+          getSentiment().catch(() => null),
+          getDisinformation().catch(() => null),
+          getCensorship().catch(() => null),
+          getHashtags().catch(() => null),
+        ]);
+
+        pythonContext = "\nPYTHON BACKEND ANALYSIS RESULTS:\n";
+        if (sentiment) {
+          pythonContext += `- Sentiment Polarization Index: ${sentiment.polarization_index.toFixed(4)}\n`;
+          pythonContext += `- Sentiment Centroid Distance: ${sentiment.centroid_distance.toFixed(4)}\n`;
+        }
+        if (disinfo) {
+          pythonContext += `- Disinformation Score Mean: ${disinfo.score_stats.mean.toFixed(4)}\n`;
+          pythonContext += `- Disinformation Risk Levels: Likely Disinfo: ${disinfo.risk_distribution.likely_disinfo}, Suspicious: ${disinfo.risk_distribution.suspicious}, Clean: ${disinfo.risk_distribution.clean}\n`;
+        }
+        if (censorship) {
+          pythonContext += `- Censorship Vulnerability Index (CVI): ${censorship.cvi ? censorship.cvi.toFixed(4) : "N/A"}\n`;
+          pythonContext += `- Algebraic Connectivity (Fiedler Value): ${censorship.fiedler_value.toFixed(4)}\n`;
+          pythonContext += `- Key Structural Holes: ${censorship.structural_holes.slice(0, 3).map(sh => `@${sh.node} (SI: ${sh.si_score.toFixed(3)})`).join(', ')}\n`;
+        }
+        if (hashtags) {
+          pythonContext += `- Hashtag Count: ${hashtags.hashtag_count}\n`;
+          pythonContext += `- Artificial Campaign Probability Ratio: ${(hashtags.artificial_ratio * 100).toFixed(1)}%\n`;
+        }
+      } catch (err) {
+        console.warn("Could not fetch python context for AI Insights:", err);
+      }
+
+      const context = buildLLMContext(computedMetrics, insights, pythonContext, driftData);
       const prompt = `You are a social network analysis expert at SIMElab Africa. Analyze this network data and provide key insights. Be specific, cite numbers, and identify patterns. Use markdown formatting.`;
       const result = await queryLLM(prompt, context);
       setLlmInsights(result);
@@ -63,20 +108,18 @@ const AIInsightsPanel: React.FC<AIInsightsPanelProps> = ({ insights, computedMet
             </div>
             <div>
               <h3 className="text-sm font-bold tracking-tight">AI-Powered Analysis</h3>
-              <p className="text-[10px] text-text-muted">Uses NVIDIA NIM / DeepSeek for deeper context</p>
+              <p className="text-[10px] text-text-muted">
+                Uses TokenRouter / NVIDIA NIM / DeepSeek for deeper context
+                {driftData && <span className="ml-2 px-1.5 py-0.5 bg-[#facc15]/10 text-[#facc15] rounded text-[9px] font-bold">+ Drift Context</span>}
+              </p>
             </div>
           </div>
-          {!llmInsights && (
+          {!isGenerating && (
             <button
               onClick={handleGenerateAI}
-              disabled={isGenerating}
               className="flex items-center gap-2 bg-[#8b5cf6] hover:bg-[#7c3aed] text-white font-bold py-2.5 px-4 rounded-xl text-xs transition-all active:scale-95 disabled:opacity-50"
             >
-              {isGenerating ? (
-                <><Loader2 size={14} className="animate-spin" /> Generating...</>
-              ) : (
-                <><Zap size={14} /> Generate AI Insights</>
-              )}
+              {llmInsights ? <><Zap size={14} /> Regenerate</> : <><Zap size={14} /> Generate AI Insights</>}
             </button>
           )}
         </div>

@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import {
   LayoutDashboard, Share2, FileText,
-  Brain, MessageSquare, Zap
+  Brain, MessageSquare, Zap, X
 } from 'lucide-react';
 import type { Vertex, ComputedMetrics } from '../engine/engineTypes';
 import type { GraphData } from '../engine/csvParserEnhanced';
@@ -11,6 +11,7 @@ import ChatPanel from '../components/ChatPanel';
 import PythonAnalysisTabs from '../components/PythonAnalysisTabs';
 import { AIInsights } from '../engine/aiInsights';
 import simelogo from '../../simelogo.jpeg';
+import type { DriftData } from '../services/pythonApi';
 
 interface AnalysisDashboardProps {
   graphData: GraphData;
@@ -25,6 +26,7 @@ const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
   const [activeTab, setActiveTab] = useState('Overview');
   const [selectedNode, setSelectedNode] = useState<string | null>(null);
   const [pySubTab, setPySubTab] = useState('pysentiment');
+  const [driftData, setDriftData] = useState<DriftData | null>(null);
 
   const displayV: Vertex[] = filteredData?.vertices || graphData.vertices;
   const displayE = filteredData?.edges || graphData.edges;
@@ -35,9 +37,9 @@ const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
   const tabs = [
     { id: 'Overview', icon: LayoutDashboard },
     { id: 'Network Graph', icon: Share2 },
+    { id: 'Python Analysis', icon: Zap },
     { id: 'AI Insights', icon: Brain },
     { id: 'Chat', icon: MessageSquare },
-    { id: 'Python Analysis', icon: Zap },
     { id: 'Report', icon: FileText },
   ];
 
@@ -205,28 +207,6 @@ const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
             );
           })()}
 
-          {/* Selected node detail */}
-          {selectedVertex && (
-            <div className="bg-[#0f172a]/30 border border-[#facc15]/20 rounded-2xl p-6">
-              <h3 className="text-sm font-bold tracking-tight mb-4">
-                Node Detail: <span className="text-[#facc15]">@{selectedVertex.label}</span>
-              </h3>
-              <div className="grid grid-cols-3 md:grid-cols-6 gap-4 text-center">
-                <MetricBadge label="Degree" value={selectedVertex.degree.toString()} />
-                <MetricBadge label="In-Degree" value={selectedVertex.inDegree.toString()} />
-                <MetricBadge label="Out-Degree" value={selectedVertex.outDegree.toString()} />
-                <MetricBadge label="Betweenness" value={selectedVertex.betweenness.toFixed(4)} />
-                <MetricBadge label="PageRank" value={selectedVertex.pagerank.toFixed(4)} />
-                <MetricBadge label="Clustering" value={selectedVertex.clusteringCoefficient.toFixed(3)} />
-                <MetricBadge label="Eigenvector" value={selectedVertex.eigenvector.toFixed(4)} />
-                <MetricBadge label="Closeness" value={selectedVertex.closeness.toFixed(4)} />
-                <MetricBadge label="Followers" value={selectedVertex.followers.toLocaleString()} />
-                <MetricBadge label="Sentiment" value={selectedVertex.sentiment} />
-                <MetricBadge label="Community" value={`C${selectedVertex.cluster + 1}`} />
-                <MetricBadge label="Bot Score" value={`${Math.round(selectedVertex.botScore * 100)}%`} />
-              </div>
-            </div>
-          )}
         </div>
       )}
 
@@ -237,13 +217,14 @@ const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
         </div>
       )}
 
-      {/* AI INSIGHTS TAB */}
-      {activeTab === 'AI Insights' && (
+      {/* AI INSIGHTS TAB — always mounted to preserve generated brief */}
+      <div style={{ display: activeTab === 'AI Insights' ? 'block' : 'none' }}>
         <AIInsightsPanel
           insights={aiInsights}
           computedMetrics={computedMetrics}
+          driftData={driftData}
         />
-      )}
+      </div>
 
       {/* CHAT TAB — always mounted to preserve messages */}
       <div style={{ display: activeTab === 'Chat' ? 'block' : 'none' }}>
@@ -251,16 +232,18 @@ const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({
           graphData={graphData}
           computedMetrics={computedMetrics}
           aiInsights={aiInsights}
+          driftData={driftData}
         />
       </div>
 
-      {/* PYTHON ANALYSIS TAB */}
-      {activeTab === 'Python Analysis' && (
+      {/* PYTHON ANALYSIS TAB — always mounted to preserve drift/sub-tab results */}
+      <div style={{ display: activeTab === 'Python Analysis' ? 'block' : 'none' }}>
         <PythonAnalysisTabs
           activeTab={pySubTab}
           onTabChange={setPySubTab}
+          onDriftResult={setDriftData}
         />
-      )}
+      </div>
 
       {/* REPORT TAB */}
       {activeTab === 'Report' && (
@@ -314,6 +297,78 @@ AI INSIGHTS${aiInsights ? `
           </p>
         </div>
       </footer>
+
+      {/* Node Detail Popup Modal */}
+      {selectedVertex && (
+        <div 
+          className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-fade-in"
+          onClick={() => setSelectedNode(null)}
+        >
+          <div 
+            className="bg-[#0f172a]/95 border border-white/10 rounded-2xl p-6 w-full max-w-2xl relative shadow-2xl backdrop-blur-md overflow-y-auto max-h-[90vh] transition-all transform scale-100"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Close button */}
+            <button 
+              onClick={() => setSelectedNode(null)} 
+              className="absolute top-4 right-4 p-2 hover:bg-white/5 rounded-xl transition-colors text-text-muted hover:text-white"
+            >
+              <X size={18} />
+            </button>
+
+            {/* Profile Info */}
+            <div className="flex items-center gap-4 mb-6">
+              {(() => {
+                const img = selectedVertex.image_url;
+                const src = img ? (img.startsWith('http') || img.startsWith('/') ? img : `/api/simelab/images/${img.replace(/\\/g, '/')}`) : null;
+                return src ? (
+                  <img src={src} alt={selectedVertex.label} className="w-16 h-16 rounded-full border-2 border-white/10 object-cover" />
+                ) : (
+                  <div className="w-16 h-16 rounded-full bg-[#8b5cf6]/20 border-2 border-white/10 flex items-center justify-center">
+                    <span className="text-[#8b5cf6] text-xl font-black">{selectedVertex.label.slice(0, 2).toUpperCase()}</span>
+                  </div>
+                );
+              })()}
+              <div>
+                <h3 className="text-lg font-black text-white">@{selectedVertex.label}</h3>
+                <div className="flex gap-2 mt-1">
+                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${selectedVertex.sentiment === 'Pos' ? 'bg-green-500/20 text-green-400' :
+                    selectedVertex.sentiment === 'Neg' ? 'bg-red-500/20 text-red-400' : 'bg-slate-500/20 text-slate-400'
+                    }`}>{selectedVertex.sentiment} Sentiment</span>
+                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${selectedVertex.isBot ? 'bg-red-500/20 text-red-400' : 'bg-green-500/20 text-green-400'}`}>
+                    {selectedVertex.isBot ? `Flagged Bot (${Math.round(selectedVertex.botScore * 100)}%)` : 'Organic Account'}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Tweet Content */}
+            {selectedVertex.tweetText && (
+              <div className="mb-6 bg-[#050a14] rounded-xl p-4 border border-white/5">
+                <p className="text-[10px] font-bold text-text-muted uppercase tracking-wider mb-2">Sample Tweet</p>
+                <p className="text-sm text-text-secondary italic leading-relaxed">
+                  "{selectedVertex.tweetText}"
+                </p>
+              </div>
+            )}
+
+            {/* Centrality Metrics Grid */}
+            <div>
+              <p className="text-[10px] font-bold text-text-muted uppercase tracking-wider mb-3">Network Centrality Metrics</p>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-center">
+                <MetricBadge label="Degree" value={selectedVertex.degree.toString()} />
+                <MetricBadge label="In-Degree" value={selectedVertex.inDegree.toString()} />
+                <MetricBadge label="Out-Degree" value={selectedVertex.outDegree.toString()} />
+                <MetricBadge label="Betweenness" value={selectedVertex.betweenness.toFixed(4)} />
+                <MetricBadge label="PageRank" value={selectedVertex.pagerank.toFixed(4)} />
+                <MetricBadge label="Clustering" value={selectedVertex.clusteringCoefficient.toFixed(3)} />
+                <MetricBadge label="Followers" value={selectedVertex.followers.toLocaleString()} />
+                <MetricBadge label="Community" value={`C${selectedVertex.cluster + 1}`} />
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

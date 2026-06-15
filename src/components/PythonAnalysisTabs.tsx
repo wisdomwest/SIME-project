@@ -25,6 +25,7 @@ interface PythonAnalysisTabsProps {
   activeTab: string;
   onTabChange: (tab: string) => void;
   datasetId?: string;
+  onDriftResult?: (data: DriftData | null) => void;
 }
 
 type LoadingState = 'idle' | 'loading' | 'loaded' | 'error';
@@ -32,7 +33,7 @@ type LoadingState = 'idle' | 'loading' | 'loaded' | 'error';
 // ─── Main Component ─────────────────────────────────────────────────────────
 
 const PythonAnalysisTabs: React.FC<PythonAnalysisTabsProps> = ({
-  activeTab, onTabChange, datasetId = 'default',
+  activeTab, onTabChange, datasetId = 'default', onDriftResult,
 }) => {
   const [sentiment, setSentiment] = useState<SentimentData | null>(null);
   const [disinfo, setDisinfo] = useState<DisinfoData | null>(null);
@@ -55,6 +56,7 @@ const PythonAnalysisTabs: React.FC<PythonAnalysisTabsProps> = ({
     try {
       const data = await getSemanticDrift(datasetId, key);
       setDrift(data);
+      onDriftResult?.(data);
     } catch (err: any) {
       setDriftError(err.message || 'Failed to run DeepSeek semantic analysis.');
       console.error(err);
@@ -152,8 +154,8 @@ const PythonAnalysisTabs: React.FC<PythonAnalysisTabsProps> = ({
       {/* DISINFORMATION TAB */}
       {activeTab === 'pydisinfo' && disinfo && <DisinfoView data={disinfo} />}
 
-      {/* DRIFT TAB */}
-      {activeTab === 'pydrift' && (
+      {/* DRIFT TAB — always mounted so results survive sub-tab navigation */}
+      <div style={{ display: activeTab === 'pydrift' ? 'block' : 'none' }}>
         <DriftView
           datasetId={datasetId}
           data={drift}
@@ -161,7 +163,7 @@ const PythonAnalysisTabs: React.FC<PythonAnalysisTabsProps> = ({
           error={driftError}
           onAnalyze={handleRunDrift}
         />
-      )}
+      </div>
 
       {/* HASHTAGS TAB */}
       {activeTab === 'pyhashtags' && hashtags && <HashtagView data={hashtags} />}

@@ -35,6 +35,19 @@ export default defineConfig({
           });
         },
       },
+      '/api/tokenrouter': {
+        target: 'https://api.tokenrouter.com',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api\/tokenrouter/, ''),
+        configure: (proxy) => {
+          proxy.on('proxyReq', (proxyReq, req) => {
+            const auth = req.headers['authorization'];
+            if (auth) {
+              proxyReq.setHeader('Authorization', auth);
+            }
+          });
+        },
+      },
       '/api/simelab': {
         target: 'http://localhost:8000',
         changeOrigin: true,

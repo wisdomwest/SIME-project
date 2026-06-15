@@ -150,20 +150,6 @@ const LandingPage: React.FC<LandingPageProps> = ({ onFileProcessed, onLoadDemo, 
             </div>
 
             <div className="mt-12 flex flex-col items-center gap-4">
-                <div className="flex items-center gap-4 w-full">
-                    <div className="h-[1px] flex-1 bg-white/5" />
-                    <span className="text-[11px] font-bold text-text-muted uppercase tracking-[0.2em]">or try with demo data</span>
-                    <div className="h-[1px] flex-1 bg-white/5" />
-                </div>
-                <button
-                    onClick={onLoadDemo}
-                    disabled={isLoading}
-                    className="bg-[#121c2c] hover:bg-[#1a2b44] text-white border border-white/5 py-3.5 px-10 rounded-xl flex items-center gap-3 text-sm font-bold transition-all active:scale-95 shadow-xl shadow-blue-500/5 disabled:opacity-50"
-                >
-                    <Zap size={18} className="text-accent-secondary fill-accent-secondary/20" />
-                    Load Daystar University Demo
-                </button>
-
                 <div className="mt-16 flex items-center gap-3 opacity-40">
                     <img src={simelogo} alt="SIME Logo" className="w-6 h-6 rounded object-cover" />
                     <p className="text-sm text-text-muted font-bold uppercase tracking-[0.3em]">

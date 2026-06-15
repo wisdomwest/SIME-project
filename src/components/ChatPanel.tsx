@@ -9,11 +9,13 @@ import {
 import { ComputedMetrics } from '../engine/engineTypes';
 import { AIInsights } from '../engine/aiInsights';
 import type { GraphData } from '../engine/csvParserEnhanced';
+import { getSentiment, getDisinformation, getCensorship, getHashtags, DriftData } from '../services/pythonApi';
 
 interface ChatPanelProps {
   graphData: GraphData;
   computedMetrics: ComputedMetrics;
   aiInsights: AIInsights | null;
+  driftData?: DriftData | null;
 }
 
 interface Message {
@@ -65,6 +67,20 @@ ${insights ? `AI INSIGHTS:
 - Suspicious accounts flagged: ${insights.suspiciousAccounts.length}` : ''}`;
 }
 
+function buildDriftContext(drift: DriftData | null | undefined): string {
+  if (!drift) return '';
+  return `
+
+SEMANTIC DRIFT ANALYSIS:
+- Drift Score: ${drift.drift_score.toFixed(2)} (${drift.drift_score > 0.4 ? 'HIGH — significant narrative shift' : 'LOW — stable narrative'})
+- Co-opted / Hijacked: ${drift.is_coopted ? 'YES' : 'NO'}
+- Early Campaign Topics: ${drift.early_topics.join('; ')}
+- Late Campaign Topics: ${drift.late_topics.join('; ')}
+- Swahili/Sheng in sample: ${drift.swahili_sheng_count}/${drift.sample_size} tweets (${Math.round(drift.swahili_sheng_count/drift.sample_size*100)}%)
+- Total tweets: ${drift.total_tweets.toLocaleString()}
+- Full Analyst Assessment: ${drift.analysis_text}`;
+}
+
 const SUGGESTED_QUESTIONS = [
   'What are the key insights from this network?',
   'Who are the most influential accounts and why?',
@@ -80,7 +96,7 @@ function renderMarkdown(text: string): string {
   return marked.parse(text, { breaks: true, gfm: true }) as string;
 }
 
-const ChatPanel: React.FC<ChatPanelProps> = ({ graphData, computedMetrics, aiInsights }) => {
+const ChatPanel: React.FC<ChatPanelProps> = ({ graphData, computedMetrics, aiInsights, driftData }) => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -88,6 +104,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ graphData, computedMetrics, aiIns
   const [apiKey, setApiKey] = useState('');
   const [provider, setProvider] = useState<LLMProvider>('deepseek');
   const [streamingContent, setStreamingContent] = useState('');
+  const [pythonContext, setPythonContext] = useState('');
   const chatEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -97,7 +114,50 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ graphData, computedMetrics, aiIns
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, streamingContent]);
 
-  const context = buildContext(graphData, computedMetrics, aiInsights);
+  useEffect(() => {
+    async function fetchPythonContext() {
+      try {
+        const [sentiment, disinfo, censorship, hashtags] = await Promise.all([
+          getSentiment().catch(() => null),
+          getDisinformation().catch(() => null),
+          getCensorship().catch(() => null),
+          getHashtags().catch(() => null),
+        ]);
+
+        let pyCtx = "\nPYTHON BACKEND ANALYSIS RESULTS:\n";
+        let hasData = false;
+        if (sentiment) {
+          hasData = true;
+          pyCtx += `- Sentiment Polarization Index: ${sentiment.polarization_index.toFixed(4)}\n`;
+          pyCtx += `- Sentiment Centroid Distance: ${sentiment.centroid_distance.toFixed(4)}\n`;
+        }
+        if (disinfo) {
+          hasData = true;
+          pyCtx += `- Disinformation Score Mean: ${disinfo.score_stats.mean.toFixed(4)}\n`;
+          pyCtx += `- Disinformation Risk Levels: Likely Disinfo: ${disinfo.risk_distribution.likely_disinfo}, Suspicious: ${disinfo.risk_distribution.suspicious}, Clean: ${disinfo.risk_distribution.clean}\n`;
+        }
+        if (censorship) {
+          hasData = true;
+          pyCtx += `- Censorship Vulnerability Index (CVI): ${censorship.cvi ? censorship.cvi.toFixed(4) : "N/A"}\n`;
+          pyCtx += `- Algebraic Connectivity (Fiedler Value): ${censorship.fiedler_value.toFixed(4)}\n`;
+          pyCtx += `- Key Structural Holes: ${censorship.structural_holes.slice(0, 3).map(sh => `@${sh.node} (SI: ${sh.si_score.toFixed(3)})`).join(', ')}\n`;
+        }
+        if (hashtags) {
+          hasData = true;
+          pyCtx += `- Hashtag Count: ${hashtags.hashtag_count}\n`;
+          pyCtx += `- Artificial Campaign Probability Ratio: ${(hashtags.artificial_ratio * 100).toFixed(1)}%\n`;
+        }
+        if (hasData) {
+          setPythonContext(pyCtx);
+        }
+      } catch (err) {
+        console.warn("Could not fetch python context for chat:", err);
+      }
+    }
+    fetchPythonContext();
+  }, []);
+
+  const context = buildContext(graphData, computedMetrics, aiInsights) + pythonContext + buildDriftContext(driftData);
 
   const sendMessage = async (question: string) => {
     if (!question.trim() || isLoading) return;
@@ -288,17 +348,17 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ graphData, computedMetrics, aiIns
               <div className="space-y-4">
                 <div>
                   <label className="text-[10px] font-bold text-text-muted uppercase block mb-2">Provider</label>
-                  <div className="grid grid-cols-2 gap-2">
-                    {(['deepseek', 'nvidia-nim'] as LLMProvider[]).map((p) => (
+                  <div className="grid grid-cols-3 gap-2">
+                    {(['deepseek', 'nvidia-nim', 'tokenrouter'] as LLMProvider[]).map((p) => (
                       <button
                         key={p}
                         onClick={() => setProvider(p)}
-                        className={`py-3 px-4 rounded-xl text-xs font-bold border transition-all ${provider === p
+                        className={`py-3 px-2 rounded-xl text-xs font-bold border transition-all ${provider === p
                             ? 'bg-[#8b5cf6]/20 border-[#8b5cf6] text-[#8b5cf6]'
                             : 'bg-white/[0.02] border-white/5 text-text-secondary hover:border-white/10'
                           }`}
                       >
-                        {p === 'deepseek' ? 'DeepSeek' : 'NVIDIA NIM'}
+                        {p === 'deepseek' ? 'DeepSeek' : p === 'nvidia-nim' ? 'NVIDIA NIM' : 'TokenRouter'}
                       </button>
                     ))}
                   </div>

@@ -204,10 +204,13 @@ const NetworkGraph: React.FC<NetworkGraphProps> = ({ vertices, edges, onNodeSele
           {
             selector: 'edge',
             style: {
-              'width': 0.2,
-              'line-color': '#1e293b',
-              'opacity': 0.1,
-              'curve-style': 'haystack',
+              'width': 0.3,
+              'line-color': '#3b82f6',
+              'opacity': 0.25,
+              'curve-style': 'bezier',
+              'target-arrow-shape': 'triangle',
+              'target-arrow-color': '#3b82f6',
+              'arrow-scale': 0.45,
             },
           },
           {
@@ -215,17 +218,7 @@ const NetworkGraph: React.FC<NetworkGraphProps> = ({ vertices, edges, onNodeSele
             style: { 'border-color': '#facc15', 'border-width': 2.5 },
           },
         ],
-        layout: {
-          name: 'cose',
-          animate: false,
-          nodeRepulsion: () => 8000,
-          idealEdgeLength: () => 60,
-          gravity: 0.25,
-          numIter: displayVertices.length > 300 ? 300 : 800,
-          coolingFactor: 0.95,
-          fit: true,
-          padding: 30,
-        },
+        layout: { name: 'null' },
         minZoom: 0.05,
         maxZoom: 5,
         wheelSensitivity: 0.3,
@@ -242,6 +235,19 @@ const NetworkGraph: React.FC<NetworkGraphProps> = ({ vertices, edges, onNodeSele
           setIsRendering(false);
         }
       });
+
+      // Run layout
+      cy.layout({
+        name: 'cose',
+        animate: false,
+        nodeRepulsion: () => 8000,
+        idealEdgeLength: () => 60,
+        gravity: 0.25,
+        numIter: displayVertices.length > 300 ? 300 : 800,
+        coolingFactor: 0.95,
+        fit: true,
+        padding: 30,
+      }).run();
 
       if (onNodeSelect) {
         cy.on('tap', 'node', (evt: any) => onNodeSelect(evt.target.id()));
@@ -270,7 +276,7 @@ const NetworkGraph: React.FC<NetworkGraphProps> = ({ vertices, edges, onNodeSele
       };
     }
     return () => { mountedRef.current = false; };
-  }, [isActive, showFullGraph, vertices.length > 0]);
+  }, [isActive, showFullGraph, initGraph]);
 
   return (
     <div className="w-full h-full relative bg-[#0a0f1e] rounded-2xl border border-white/5 overflow-hidden">
