@@ -10,12 +10,14 @@ import { ComputedMetrics } from '../engine/engineTypes';
 import { AIInsights } from '../engine/aiInsights';
 import type { GraphData } from '../engine/csvParserEnhanced';
 import { getSentiment, getDisinformation, getCensorship, getHashtags, DriftData } from '../services/pythonApi';
+import { useSocialData } from '../hooks/useSocialData';
 
 interface ChatPanelProps {
   graphData: GraphData;
   computedMetrics: ComputedMetrics;
   aiInsights: AIInsights | null;
   driftData?: DriftData | null;
+  isSidebar?: boolean;
 }
 
 interface Message {
@@ -93,11 +95,16 @@ const SUGGESTED_QUESTIONS = [
 ];
 
 function renderMarkdown(text: string): string {
-  return marked.parse(text, { breaks: true, gfm: true }) as string;
+  try {
+    const result = marked.parse(text, { breaks: true, gfm: true });
+    return typeof result === 'string' ? result : text;
+  } catch {
+    return text;
+  }
 }
 
-const ChatPanel: React.FC<ChatPanelProps> = ({ graphData, computedMetrics, aiInsights, driftData }) => {
-  const [messages, setMessages] = useState<Message[]>([]);
+const ChatPanel: React.FC<ChatPanelProps> = ({ graphData, computedMetrics, aiInsights, driftData, isSidebar }) => {
+  const { pythonDatasetId, chatMessages, setChatMessages } = useSocialData();
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
@@ -112,16 +119,17 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ graphData, computedMetrics, aiIns
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, streamingContent]);
+  }, [chatMessages, streamingContent]);
 
   useEffect(() => {
     async function fetchPythonContext() {
+      if (!pythonDatasetId) return;
       try {
         const [sentiment, disinfo, censorship, hashtags] = await Promise.all([
-          getSentiment().catch(() => null),
-          getDisinformation().catch(() => null),
-          getCensorship().catch(() => null),
-          getHashtags().catch(() => null),
+          getSentiment(pythonDatasetId).catch(() => null),
+          getDisinformation(pythonDatasetId).catch(() => null),
+          getCensorship(pythonDatasetId).catch(() => null),
+          getHashtags(pythonDatasetId).catch(() => null),
         ]);
 
         let pyCtx = "\nPYTHON BACKEND ANALYSIS RESULTS:\n";
@@ -163,7 +171,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ graphData, computedMetrics, aiIns
     if (!question.trim() || isLoading) return;
 
     const userMsg: Message = { role: 'user', content: question, timestamp: Date.now() };
-    setMessages(prev => [...prev, userMsg]);
+    setChatMessages(prev => [...prev, userMsg]);
     setInput('');
     setIsLoading(true);
     setStreamingContent('');
@@ -174,10 +182,10 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ graphData, computedMetrics, aiIns
         fullResponse += chunk;
         setStreamingContent(fullResponse);
       });
-      setMessages(prev => [...prev, { role: 'assistant', content: fullResponse, timestamp: Date.now() }]);
+      setChatMessages(prev => [...prev, { role: 'assistant', content: fullResponse, timestamp: Date.now() }]);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Unknown error';
-      setMessages(prev => [...prev, { role: 'assistant', content: `Error: ${msg}`, timestamp: Date.now() }]);
+      setChatMessages(prev => [...prev, { role: 'assistant', content: `Error: ${msg}`, timestamp: Date.now() }]);
     } finally {
       setStreamingContent('');
       setIsLoading(false);
@@ -193,32 +201,46 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ graphData, computedMetrics, aiIns
   };
 
   return (
-    <div className="flex flex-col h-[calc(100vh-280px)] min-h-[500px]">
+    <div className={`flex flex-col ${isSidebar ? 'h-full flex-1 min-h-0' : 'h-[calc(100vh-280px)] min-h-[500px]'}`}>
       {/* Header */}
-      <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 bg-[#8b5cf6]/20 rounded-lg flex items-center justify-center">
-            <Bot size={16} className="text-[#8b5cf6]" />
+      {!isSidebar ? (
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 bg-[#8b5cf6]/20 rounded-lg flex items-center justify-center">
+              <Bot size={16} className="text-[#8b5cf6]" />
+            </div>
+            <div>
+              <h3 className="text-sm font-bold tracking-tight">AI Analyst Chat</h3>
+              <p className="text-[10px] text-text-muted">
+                {config ? `${config.provider === 'deepseek' ? 'DeepSeek' : 'NVIDIA NIM'} • ${config.model}` : 'No API key configured'}
+              </p>
+            </div>
           </div>
-          <div>
-            <h3 className="text-sm font-bold tracking-tight">AI Analyst Chat</h3>
-            <p className="text-[10px] text-text-muted">
-              {config ? `${config.provider === 'deepseek' ? 'DeepSeek' : 'NVIDIA NIM'} • ${config.model}` : 'No API key configured'}
-            </p>
-          </div>
+          <button
+            onClick={() => { setShowSettings(true); setProvider(config?.provider || 'deepseek'); }}
+            className="p-2 hover:bg-white/5 rounded-lg transition-colors text-text-muted hover:text-white"
+            title="API Settings"
+          >
+            <Settings size={16} />
+          </button>
         </div>
-        <button
-          onClick={() => { setShowSettings(true); setProvider(config?.provider || 'deepseek'); }}
-          className="p-2 hover:bg-white/5 rounded-lg transition-colors text-text-muted hover:text-white"
-          title="API Settings"
-        >
-          <Settings size={16} />
-        </button>
-      </div>
+      ) : (
+        <div className="flex items-center justify-between mb-3 border-b border-rule pb-2">
+          <span className="text-[10px] text-ink-soft uppercase tracking-wider">
+            {config ? `${config.provider === 'deepseek' ? 'DeepSeek' : config.provider === 'nvidia-nim' ? 'NVIDIA NIM' : 'TokenRouter'}` : 'Credentials Required'}
+          </span>
+          <button
+            onClick={() => { setShowSettings(true); setProvider(config?.provider || 'deepseek'); }}
+            className="text-ink-soft hover:text-ink transition-colors flex items-center gap-1 text-[10px] font-medium"
+          >
+            <Settings size={12} /> Configure
+          </button>
+        </div>
+      )}
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto space-y-4 pr-2 mb-4 custom-scrollbar">
-        {messages.length === 0 && !isLoading && (
+        {chatMessages.length === 0 && !isLoading && (
           <div className="text-center py-12">
             <Bot size={40} className="text-text-muted mx-auto mb-4 opacity-30" />
             <p className="text-sm text-text-muted mb-6">Ask me anything about this dataset</p>
@@ -237,7 +259,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ graphData, computedMetrics, aiIns
         )}
 
         <AnimatePresence>
-          {messages.map((msg, i) => (
+          {chatMessages.map((msg, i) => (
             <motion.div
               key={i}
               initial={{ opacity: 0, y: 10 }}
@@ -307,9 +329,9 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ graphData, computedMetrics, aiIns
         >
           {isLoading ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
         </button>
-        {messages.length > 0 && (
+        {chatMessages.length > 0 && (
           <button
-            onClick={() => setMessages([])}
+            onClick={() => setChatMessages([])}
             className="p-3 hover:bg-white/5 rounded-xl transition-colors text-text-muted hover:text-red-400"
             title="Clear chat"
           >

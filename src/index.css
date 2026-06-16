@@ -1,137 +1,170 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@300;400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght,SOFT@9..144,300..900,0..100&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@300;400;500;600;700&display=swap');
+@import './styles/tokens.css';
 @import "tailwindcss";
 
 @theme {
-  --color-bg-primary: #050a14;
-  --color-bg-secondary: #08101e;
-  --color-accent-primary: #3b82f6;
-  --color-accent-secondary: #facc15;
-  --color-text-primary: #f8fafc;
-  --color-text-secondary: #94a3b8;
-  --color-text-muted: #4b5563;
-  --color-surface-hover: rgba(59, 130, 246, 0.1);
+  /* Surface */
+  --color-paper: var(--paper);
+  --color-paper-2: var(--paper-2);
+  --color-paper-3: var(--paper-3);
+  --color-ink: var(--ink);
+  --color-ink-soft: var(--ink-soft);
+  --color-ink-mute: var(--ink-mute);
+  --color-rule: var(--rule);
+  --color-rule-strong: var(--rule-strong);
 
-  --font-interface: 'Inter', sans-serif;
-  --font-heading: 'Outfit', sans-serif;
+  /* Accent */
+  --color-ember: var(--ember);
+  --color-ember-soft: var(--ember-soft);
+  --color-ember-strong: var(--ember-strong);
 
-  --shadow-accent-glow: 0 0 20px rgba(59, 130, 246, 0.4);
-}
+  /* Signals */
+  --color-signal-pos: var(--signal-pos);
+  --color-signal-pos-soft: var(--signal-pos-soft);
+  --color-signal-neg: var(--signal-neg);
+  --color-signal-neg-soft: var(--signal-neg-soft);
+  --color-signal-neu: var(--signal-neu);
+  --color-signal-neu-soft: var(--signal-neu-soft);
+  --color-signal-warn: var(--signal-warn);
+  --color-signal-warn-soft: var(--signal-warn-soft);
 
-:root {
-  --bg-surface: rgba(30, 32, 44, 0.7);
-  --glass-blur: blur(12px);
-  --border-subtle: rgba(255, 255, 255, 0.1);
+  --font-display: 'Times New Roman', Times, Georgia, serif;
+  --font-body: 'Times New Roman', Times, Georgia, serif;
+  --font-mono: 'JetBrains Mono', 'SF Mono', monospace;
 }
 
 @layer base {
+  html, body, #root {
+    height: 100%;
+  }
+
   body {
-    @apply bg-bg-primary text-text-primary overflow-x-hidden antialiased;
-    font-family: var(--font-interface);
+    background-color: var(--paper);
+    color: var(--ink);
+    font-family: var(--font-body);
+    font-feature-settings: 'ss01', 'cv11';
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    /* Faint paper grain — done with a fixed radial-gradient, no asset. */
+    background-image:
+      radial-gradient(var(--grid) 1px, transparent 1px);
+    background-size: 4px 4px;
+    background-attachment: fixed;
   }
 
-  h1,
-  h2,
-  h3,
-  h4,
-  h5,
-  h6 {
-    font-family: var(--font-heading);
-    @apply tracking-tight;
-  }
-}
-
-@layer components {
-  .glass-panel {
-    background: var(--bg-surface);
-    backdrop-filter: var(--glass-blur);
-    border: 1px solid var(--border-subtle);
-    @apply rounded-xl shadow-lg;
+  h1, h2, h3, h4, h5, h6 {
+    font-family: var(--font-display);
+    font-variation-settings: 'opsz' 144, 'SOFT' 100;
+    color: var(--ink);
+    letter-spacing: -0.01em;
   }
 
-  .btn-primary {
-    @apply bg-accent-primary text-white px-6 py-3 rounded-lg font-semibold cursor-pointer transition-all duration-200 flex items-center gap-2 hover:translate-y-[-1px] hover:shadow-accent-glow hover:brightness-110;
-  }
-
-  .btn-outline {
-    @apply bg-transparent text-text-primary px-6 py-3 rounded-lg border border-white/10 font-medium cursor-pointer transition-all duration-200 hover:bg-white/5 hover:border-text-secondary;
+  ::selection {
+    background: var(--ember-soft);
+    color: var(--ink);
   }
 }
 
-/* Custom Scrollbar */
-::-webkit-scrollbar {
-  width: 8px;
-}
-
-::-webkit-scrollbar-track {
-  background: var(--color-bg-primary);
-}
-
+/* ─── Scrollbar ────────────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb {
-  background: var(--bg-surface);
-  border-radius: 4px;
+  background: var(--color-paper-3);
+  border: 2px solid var(--color-paper);
+  border-radius: 6px;
 }
+::-webkit-scrollbar-thumb:hover { background: var(--color-ink-mute); }
 
-::-webkit-scrollbar-thumb:hover {
-  background: var(--color-text-muted);
+/* ─── Hairline rules ──────────────────────────────────────────────── */
+.rule-y { border-color: var(--color-rule); }
+.rule-t { border-top: 1px solid var(--color-rule); }
+.rule-b { border-bottom: 1px solid var(--color-rule); }
+.rule-l { border-left: 1px solid var(--color-rule); }
+
+/* ─── Markdown rendered content ──────────────────────────────────── */
+.markdown-content strong {
+  font-weight: 700;
+  color: var(--ink);
 }
-
-/* Animations */
-@keyframes fadeIn {
-  from {
-    opacity: 0;
-    transform: translateY(10px);
-  }
-
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+.markdown-content em {
+  font-style: italic;
 }
-
-.animate-fade-in {
-  animation: fadeIn 0.5s ease-out forwards;
+.markdown-content ul {
+  list-style: disc;
+  padding-left: 1.2em;
+  margin: 0.4em 0;
 }
-
-/* === Markdown rendering in chat bubbles === */
-.markdown-content h1 { font-size: 1.1em; font-weight: 700; margin: 0.6em 0 0.3em; color: #f8fafc; }
-.markdown-content h2 { font-size: 1em; font-weight: 700; margin: 0.5em 0 0.25em; color: #f8fafc; }
-.markdown-content h3 { font-size: 0.9em; font-weight: 700; margin: 0.4em 0 0.2em; color: #e2e8f0; }
-.markdown-content p { margin: 0.3em 0; }
-.markdown-content strong { font-weight: 700; color: #facc15; }
-.markdown-content em { font-style: italic; color: #94a3b8; }
-.markdown-content ul, .markdown-content ol { margin: 0.3em 0; padding-left: 1.2em; }
-.markdown-content li { margin: 0.15em 0; }
+.markdown-content ol {
+  list-style: decimal;
+  padding-left: 1.2em;
+  margin: 0.4em 0;
+}
+.markdown-content li {
+  margin-bottom: 0.2em;
+}
 .markdown-content code {
-  background: rgba(139, 92, 246, 0.15);
-  color: #c4b5fd;
-  padding: 0.1em 0.35em;
-  border-radius: 4px;
-  font-size: 0.85em;
-  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-family: var(--font-mono);
+  background: var(--paper-3);
+  padding: 0.1em 0.3em;
+  border-radius: 3px;
+  font-size: 0.9em;
 }
 .markdown-content pre {
-  background: rgba(15, 23, 42, 0.7);
-  border: 1px solid rgba(255,255,255,0.05);
-  border-radius: 8px;
-  padding: 0.6em 0.8em;
-  margin: 0.4em 0;
+  background: var(--paper-3);
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  padding: 0.8em 1em;
   overflow-x: auto;
-  font-size: 0.8em;
+  margin: 0.6em 0;
 }
 .markdown-content pre code {
   background: none;
   padding: 0;
-  color: #94a3b8;
+  border-radius: 0;
+}
+.markdown-content h1,
+.markdown-content h2,
+.markdown-content h3,
+.markdown-content h4 {
+  margin-top: 1em;
+  margin-bottom: 0.4em;
+}
+.markdown-content p {
+  margin-bottom: 0.6em;
+}
+.markdown-content a {
+  color: var(--ember);
+  text-decoration: underline;
 }
 .markdown-content blockquote {
-  border-left: 2px solid #8b5cf6;
+  border-left: 3px solid var(--ember-soft);
   padding-left: 0.8em;
-  margin: 0.4em 0;
-  color: #94a3b8;
-  font-style: italic;
+  margin: 0.6em 0;
+  color: var(--ink-soft);
 }
-.markdown-content hr { border: none; border-top: 1px solid rgba(255,255,255,0.08); margin: 0.6em 0; }
-.markdown-content a { color: #8b5cf6; text-decoration: underline; }
-.markdown-content table { border-collapse: collapse; margin: 0.4em 0; font-size: 0.8em; width: 100%; }
-.markdown-content th { background: rgba(139,92,246,0.1); padding: 0.3em 0.5em; border: 1px solid rgba(255,255,255,0.08); text-align: left; font-weight: 700; }
-.markdown-content td { padding: 0.25em 0.5em; border: 1px solid rgba(255,255,255,0.05); }
+.markdown-content hr {
+  border: none;
+  border-top: 1px solid var(--rule);
+  margin: 1em 0;
+}
+
+/* ─── Print stylesheet (for Report page) ──────────────────────────── */
+@media print {
+  @page { size: A4; margin: 18mm; }
+  body { background: white !important; background-image: none !important; }
+  .no-print { display: none !important; }
+  .print-only { display: block !important; }
+  .page-break { break-before: page; }
+  h1, h2, h3 { page-break-after: avoid; }
+  table, figure { page-break-inside: avoid; }
+}
+.print-only { display: none; }
+
+/* ─── Reduced motion ──────────────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

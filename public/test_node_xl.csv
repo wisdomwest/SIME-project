@@ -1,6 +1,0 @@
-source,target,source_label,sentiment,followers,platform,topic,date
-user1,user2,Alice,Pos,150,Twitter,Tech,2026-03-21T10:00:00
-user2,user3,Bob,Neu,250,Twitter,Tech,2026-03-21T10:05:00
-user3,user1,Charlie,Neg,50,Reddit,News,2026-03-21T10:10:00
-user4,user1,Dave,Pos,500,LinkedIn,Business,2026-03-21T10:15:00
-user2,user4,Bob,Neu,250,Twitter,Tech,2026-03-21T10:20:00

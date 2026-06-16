@@ -4,6 +4,8 @@ import { AlertTriangle, TrendingUp, Hash, Globe, Activity, Sparkles, Loader2, Za
 import { getConfig, queryLLM } from '../services/llmService';
 import { ComputedMetrics } from '../engine/engineTypes';
 import { getSentiment, getDisinformation, getCensorship, getHashtags, DriftData } from '../services/pythonApi';
+import { useSocialData } from '../hooks/useSocialData';
+import { marked } from 'marked';
 
 interface AIInsightsPanelProps {
   insights: AIInsights | null;
@@ -39,7 +41,7 @@ Generate a concise analysis: key patterns, community structure, influencer dynam
 }
 
 const AIInsightsPanel: React.FC<AIInsightsPanelProps> = ({ insights, computedMetrics, driftData }) => {
-  const [llmInsights, setLlmInsights] = useState<string | null>(null);
+  const { pythonDatasetId, aiAnalysisResult, setAiAnalysisResult } = useSocialData();
   const [isGenerating, setIsGenerating] = useState(false);
   const [llmError, setLlmError] = useState<string | null>(null);
 
@@ -56,11 +58,16 @@ const AIInsightsPanel: React.FC<AIInsightsPanelProps> = ({ insights, computedMet
     try {
       let pythonContext = "";
       try {
+        const sentimentPromise = pythonDatasetId ? getSentiment(pythonDatasetId).catch(() => null) : Promise.resolve(null);
+        const disinfoPromise = pythonDatasetId ? getDisinformation(pythonDatasetId).catch(() => null) : Promise.resolve(null);
+        const censorshipPromise = pythonDatasetId ? getCensorship(pythonDatasetId).catch(() => null) : Promise.resolve(null);
+        const hashtagsPromise = pythonDatasetId ? getHashtags(pythonDatasetId).catch(() => null) : Promise.resolve(null);
+
         const [sentiment, disinfo, censorship, hashtags] = await Promise.all([
-          getSentiment().catch(() => null),
-          getDisinformation().catch(() => null),
-          getCensorship().catch(() => null),
-          getHashtags().catch(() => null),
+          sentimentPromise,
+          disinfoPromise,
+          censorshipPromise,
+          hashtagsPromise,
         ]);
 
         pythonContext = "\nPYTHON BACKEND ANALYSIS RESULTS:\n";
@@ -88,7 +95,7 @@ const AIInsightsPanel: React.FC<AIInsightsPanelProps> = ({ insights, computedMet
       const context = buildLLMContext(computedMetrics, insights, pythonContext, driftData);
       const prompt = `You are a social network analysis expert at SIMElab Africa. Analyze this network data and provide key insights. Be specific, cite numbers, and identify patterns. Use markdown formatting.`;
       const result = await queryLLM(prompt, context);
-      setLlmInsights(result);
+      setAiAnalysisResult(result);
     } catch (err: unknown) {
       setLlmError(err instanceof Error ? err.message : 'Failed to generate insights');
     } finally {
@@ -119,7 +126,7 @@ const AIInsightsPanel: React.FC<AIInsightsPanelProps> = ({ insights, computedMet
               onClick={handleGenerateAI}
               className="flex items-center gap-2 bg-[#8b5cf6] hover:bg-[#7c3aed] text-white font-bold py-2.5 px-4 rounded-xl text-xs transition-all active:scale-95 disabled:opacity-50"
             >
-              {llmInsights ? <><Zap size={14} /> Regenerate</> : <><Zap size={14} /> Generate AI Insights</>}
+              {aiAnalysisResult ? <><Zap size={14} /> Regenerate</> : <><Zap size={14} /> Generate AI Insights</>}
             </button>
           )}
         </div>
@@ -137,21 +144,16 @@ const AIInsightsPanel: React.FC<AIInsightsPanelProps> = ({ insights, computedMet
           </div>
         )}
 
-        {llmInsights && (
+        {aiAnalysisResult && (
           <div className="bg-[#0a0f1e] border border-white/5 rounded-xl p-5 mt-3">
             <div
               className="text-xs leading-relaxed text-text-secondary markdown-content"
               dangerouslySetInnerHTML={{
-                __html: llmInsights
-                  .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-                  .replace(/\*(.+?)\*/g, '<em>$1</em>')
-                  .replace(/^- (.+)$/gm, '<li>$1</li>')
-                  .replace(/(<li>.*<\/li>)/s, '<ul>$1</ul>')
-                  .replace(/\n\n/g, '<br/><br/>')
+                __html: marked.parse(aiAnalysisResult, { breaks: true, gfm: true }) as string,
               }}
             />
             <button
-              onClick={() => { setLlmInsights(null); setLlmError(null); }}
+              onClick={() => { setAiAnalysisResult(null); setLlmError(null); }}
               className="mt-3 text-[10px] text-text-muted hover:text-white transition-colors"
             >
               Clear & regenerate
@@ -162,7 +164,7 @@ const AIInsightsPanel: React.FC<AIInsightsPanelProps> = ({ insights, computedMet
 
       {/* Key metrics row */}
       {insights && (
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <div className="grid grid-cols-2 gap-3">
           <MiniStatCard
             icon={<Activity size={14} />}
             label="Bot Activity"

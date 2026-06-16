@@ -11,7 +11,7 @@
 import React, { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
 import {
-  MessageCircle, AlertTriangle, Hash, Shield, Loader2, Zap, Download, Brain, ChevronRight,
+  MessageCircle, AlertTriangle, Hash, Shield, Loader2, Zap, Brain, ChevronRight,
 } from 'lucide-react';
 import {
   getSentiment, getDisinformation, getHashtags, getCensorship, getSemanticDrift,
@@ -855,7 +855,7 @@ const DriftView: React.FC<{
   loading: boolean;
   error: string | null;
   onAnalyze: () => void;
-}> = ({ datasetId, data, loading, error, onAnalyze }) => {
+}> = ({ datasetId: _datasetId, data, loading, error, onAnalyze }) => {
   const apiKey = localStorage.getItem('simelab_llm_key');
 
   if (!apiKey) {

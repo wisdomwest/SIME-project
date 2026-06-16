@@ -1,87 +1,84 @@
-import React, { useEffect, useState } from 'react';
-import Sidebar from './components/Sidebar';
-import TopBar from './components/TopBar';
-import LandingPage from './pages/LandingPage';
-import AnalysisDashboard from './pages/AnalysisDashboard';
-import LoadingOverlay from './components/LoadingOverlay';
+import React, { useEffect } from 'react';
+import { LoadingOverlay } from './components/layout/LoadingOverlay';
+import { LandingPage } from './pages/LandingPage';
+import { OverviewPage } from './pages/OverviewPage';
+import { NetworkPage } from './pages/NetworkPage';
+import { SentimentPage } from './pages/SentimentPage';
+import { DisinfoPage } from './pages/DisinfoPage';
+import { HashtagsPage } from './pages/HashtagsPage';
+import { CensorshipPage } from './pages/CensorshipPage';
+import { DriftPage } from './pages/DriftPage';
+import { ReportPage } from './pages/ReportPage';
+import { DocsPage } from './pages/DocsPage';
+import { AccountDrawer } from './components/insights/AccountDrawer';
+import { AppShell } from './components/layout/AppShell';
+import { useUrlState } from './app/useUrlState';
 import { useSocialData } from './hooks/useSocialData';
 import { getBackendLLMConfig } from './services/pythonApi';
 
-function App() {
-  const [configSynced, setConfigSynced] = useState(false);
+const App: React.FC = () => {
+  const { route } = useUrlState();
+  const { graphData } = useSocialData();
 
   useEffect(() => {
+    // Sync LLM config
     getBackendLLMConfig()
       .then((cfg) => {
-        if (cfg.apiKey) {
+        if (cfg?.apiKey) {
           localStorage.setItem('simelab_llm_provider', cfg.provider);
           localStorage.setItem('simelab_llm_key', cfg.apiKey);
         }
-        setConfigSynced(true);
       })
-      .catch((err) => {
-        console.warn('Could not sync backend LLM config:', err);
-        setConfigSynced(true);
-      });
+      .catch(() => {});
+
+    // Sync theme
+    const saved = localStorage.getItem('theme');
+    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+    if (saved === 'dark' || (!saved && prefersDark)) {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
   }, []);
-  const {
-    graphData,
-    computedMetrics,
-    aiInsights,
-    filteredData,
-    isLoading,
-    filters,
-    processingStage,
-    processFile,
-    updateFilters,
-    resetFilters,
-    loadDemo,
-    goToLandingPage,
-  } = useSocialData();
+
+  const onLanding = route.name === 'landing' || !graphData;
+  const hasData = !!graphData;
+
+  if (onLanding) {
+    return (
+      <div className="h-screen w-full bg-paper text-ink flex flex-col overflow-y-auto">
+        <LoadingOverlay />
+        {route.name === 'docs' ? <DocsPage /> : <LandingPage />}
+      </div>
+    );
+  }
 
   return (
-    <div className="flex flex-col h-screen w-full bg-[#050a14] text-text-primary overflow-hidden">
-      <LoadingOverlay
-        isVisible={isLoading}
-        stage={processingStage.stage}
-        subStage=""
-        progress={processingStage.progress}
-      />
-
-      <TopBar
-        datasetId={null}
-        onLogoClick={goToLandingPage}
-        graphData={graphData}
-      />
-      <div className="flex flex-1 overflow-hidden">
-        <Sidebar
-          filters={filters}
-          onFilterChange={updateFilters}
-          onResetFilters={resetFilters}
-          isDataLoaded={!!graphData}
-          onFileProcessed={processFile}
-          graphData={graphData}
-        />
-
-        <main className="flex-1 overflow-y-auto overflow-x-hidden relative custom-scrollbar">
-          {!graphData ? (
-            <LandingPage
-              onFileProcessed={processFile}
-              onLoadDemo={loadDemo}
-              isLoading={isLoading}
-            />
-          ) : computedMetrics && (
-            <AnalysisDashboard
-              graphData={graphData}
-              computedMetrics={computedMetrics}
-              aiInsights={aiInsights}
-              filteredData={filteredData}
-            />
-          )}
-        </main>
-      </div>
-    </div>
+    <>
+      <LoadingOverlay />
+      <AppShell hasData={hasData}>
+        {renderPage(route.name)}
+        <AccountDrawer />
+      </AppShell>
+    </>
   );
-}
+
+  function renderPage(name: string) {
+    switch (name) {
+      case 'network': return <NetworkPage />;
+      case 'sentiment': return <SentimentPage />;
+      case 'disinfo': return <DisinfoPage />;
+      case 'hashtags': return <HashtagsPage />;
+      case 'censorship': return <CensorshipPage />;
+      case 'drift': return <DriftPage />;
+      case 'report': return <ReportPage />;
+      case 'docs': return <DocsPage />;
+      case 'overview':
+      case 'account':
+      default:
+        return <OverviewPage />;
+    }
+  }
+};
 
 export default App;

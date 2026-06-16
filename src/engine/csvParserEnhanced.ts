@@ -26,6 +26,8 @@ export interface Vertex {
   isBot: boolean;
   botScore: number;
   image_url?: string;
+  x?: number;
+  y?: number;
 }
 
 export interface Edge {
@@ -40,6 +42,8 @@ export interface GraphData {
   vertices: Vertex[];
   edges: Edge[];
   metrics: NetworkMetrics;
+  /** True when the NodeXL Vertices sheet already contains precomputed centrality/metric values */
+  hasPrecomputedMetrics?: boolean;
 }
 
 export interface NetworkMetrics {
@@ -104,6 +108,16 @@ function parseSentiment(val: unknown): 'Pos' | 'Neu' | 'Neg' {
   return 'Neu';
 }
 
+function cleanExcelDate(val: string): string {
+  if (!val) return '';
+  const num = parseFloat(val);
+  if (!isNaN(num) && num > 10000 && num < 100000 && /^\d+(\.\d+)?$/.test(val)) {
+    const d = new Date(Math.round((num - 25569) * 86400 * 1000));
+    return d.toISOString();
+  }
+  return val;
+}
+
 function extractHashtags(text: string): string[] {
   if (!text) return [];
   const matches = text.match(/#[A-Za-z0-9_]+/g);
@@ -126,7 +140,7 @@ async function parseCSVFile(file: File): Promise<GraphData> {
       dynamicTyping: false,
       complete: (results) => {
         try {
-          resolve(processRows(results.data as Record<string, unknown>[]));
+          resolve(processRows(results.data as Record<string, unknown> []));
         } catch (e) { reject(e); }
       },
       error: (e: unknown) => reject(e),
@@ -215,6 +229,10 @@ function parseNodeXLWorkbook(workbook: XLSX.WorkBook): GraphData {
     return isNaN(v) ? 0 : v;
   };
 
+  const vertColHdr = (key: string, fallback: string): string => {
+    return findColumn(vertHeaders, key) || fallback;
+  };
+
   for (let i = vertDataStart; i < vertRaw.length; i++) {
     const row = vertRaw[i];
     if (!row || row.length === 0) continue;
@@ -240,11 +258,11 @@ function parseNodeXLWorkbook(workbook: XLSX.WorkBook): GraphData {
       clusteringCoefficient: vertexColNum(row, 'Clustering Coefficient'),
       cluster: -1,
       clusterLabel: '',
-      sentiment: 'Neu',
+      sentiment: parseSentiment(vertexColVal(row, vertColHdr('sentiment', 'Sentiment'))),
       followers: vertexColNum(row, 'Followers'),
       retweets: vertexColNum(row, 'Tweets'),
       favorites: vertexColNum(row, 'Favourites Count'),
-      date: vertexColVal(row, 'Joined Twitter Date (UTC)'),
+      date: cleanExcelDate(vertexColVal(row, vertColHdr('date', 'Joined Twitter Date (UTC)'))),
       platform: 'Twitter',
       topic: 'RejectFinanceBill2024',
       tweetText: '',
@@ -252,6 +270,8 @@ function parseNodeXLWorkbook(workbook: XLSX.WorkBook): GraphData {
       isBot: false,
       botScore: 0,
       image_url: image_url || undefined,
+      x: vertexColNum(row, 'X'),
+      y: vertexColNum(row, 'Y'),
     });
   }
 
@@ -281,7 +301,7 @@ function parseNodeXLWorkbook(workbook: XLSX.WorkBook): GraphData {
       source: v1,
       target: v2,
       weight: 1,
-      date: edgeColVal(row, 'Date') || edgeColVal(row, 'Relationship Date (UTC)') || '',
+      date: cleanExcelDate(edgeColVal(row, 'Date') || edgeColVal(row, 'Relationship Date (UTC)') || ''),
       relation: edgeColVal(row, 'Relationship') || 'mention',
     });
 
@@ -301,6 +321,7 @@ function parseNodeXLWorkbook(workbook: XLSX.WorkBook): GraphData {
   return {
     vertices,
     edges,
+    hasPrecomputedMetrics: true,
     metrics: {
       totalVertices: vertices.length,
       totalEdges: edges.length,
@@ -327,6 +348,7 @@ function createEmptyVertex(id: string): Vertex {
     date: '', platform: '', topic: 'Uncategorized',
     tweetText: '', hashtags: [],
     isBot: false, botScore: 0,
+    x: 0, y: 0,
   };
 }
 
@@ -379,7 +401,7 @@ function buildGraphFromRows(rows: Record<string, unknown>[], headers: string[]):
         followers: followersCol ? parseInt(String(row[followersCol] || '0')) || 0 : 0,
         retweets: retweetsCol ? parseInt(String(row[retweetsCol] || '0')) || 0 : 0,
         favorites: favsCol ? parseInt(String(row[favsCol] || '0')) || 0 : 0,
-        date: dateCol ? String(row[dateCol] || '') : '',
+        date: dateCol ? cleanExcelDate(String(row[dateCol] || '')) : '',
         platform: platformCol ? String(row[platformCol] || '') : '',
         topic: topicCol ? String(row[topicCol] || '') : 'Uncategorized',
         tweetText: tweet,
@@ -411,7 +433,7 @@ function buildGraphFromRows(rows: Record<string, unknown>[], headers: string[]):
         source,
         target,
         weight: retweetsCol ? (parseInt(String(row[retweetsCol] || '1')) || 1) : 1,
-        date: dateCol ? String(row[dateCol] || '') : '',
+        date: dateCol ? cleanExcelDate(String(row[dateCol] || '')) : '',
         relation: 'mention',
       });
       vertexMap.get(source)!.outDegree++;

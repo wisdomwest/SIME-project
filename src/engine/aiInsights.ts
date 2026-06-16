@@ -47,13 +47,14 @@ export interface HashtagStat {
 
 // === BOT / COORDINATED BEHAVIOUR DETECTION ===
 function detectBots(vertices: Vertex[], edges: Edge[]): void {
-  const edgeMap = new Map<string, number[]>(); // source -> [timestamps]
+  // Store raw date strings instead of parsing Date object for all edges upfront.
+  // This avoids calling slow new Date() on every edge in the graph (e.g. 50,000 times).
+  const edgeMap = new Map<string, string[]>(); // source -> [dateStrings]
   for (const e of edges) {
-    if (!edgeMap.has(e.source)) edgeMap.set(e.source, []);
-    try {
-      const ts = new Date(e.date).getTime();
-      if (!isNaN(ts)) edgeMap.get(e.source)!.push(ts);
-    } catch (_) {}
+    if (e.date) {
+      if (!edgeMap.has(e.source)) edgeMap.set(e.source, []);
+      edgeMap.get(e.source)!.push(e.date);
+    }
   }
 
   for (const v of vertices) {
@@ -78,21 +79,27 @@ function detectBots(vertices: Vertex[], edges: Edge[]): void {
       reasons.push('High degree, low betweenness (amplification pattern)');
     }
 
-    // 4. Timing pattern: very regular intervals
-    const timestamps = edgeMap.get(v.id) || [];
-    if (timestamps.length > 5) {
-      timestamps.sort((a, b) => a - b);
-      const intervals: number[] = [];
-      for (let i = 1; i < timestamps.length; i++) {
-        intervals.push(timestamps[i] - timestamps[i - 1]);
-      }
-      if (intervals.length > 0) {
-        const avg = intervals.reduce((s, x) => s + x, 0) / intervals.length;
-        const variance = intervals.reduce((s, x) => s + (x - avg) ** 2, 0) / intervals.length;
-        const cv = Math.sqrt(variance) / avg;
-        if (cv < 0.3 && intervals.length > 5) {
-          score += 0.25;
-          reasons.push('Abnormally regular posting pattern (possible automation)');
+    // 4. Timing pattern: very regular intervals (only parse dates for highly active nodes)
+    const rawDates = edgeMap.get(v.id) || [];
+    if (rawDates.length > 5) {
+      const timestamps = rawDates
+        .map(d => new Date(d).getTime())
+        .filter(ts => !isNaN(ts))
+        .sort((a, b) => a - b);
+
+      if (timestamps.length > 5) {
+        const intervals: number[] = [];
+        for (let i = 1; i < timestamps.length; i++) {
+          intervals.push(timestamps[i] - timestamps[i - 1]);
+        }
+        if (intervals.length > 0) {
+          const avg = intervals.reduce((s, x) => s + x, 0) / intervals.length;
+          const variance = intervals.reduce((s, x) => s + (x - avg) ** 2, 0) / intervals.length;
+          const cv = Math.sqrt(variance) / avg;
+          if (cv < 0.3 && intervals.length > 5) {
+            score += 0.25;
+            reasons.push('Abnormally regular posting pattern (possible automation)');
+          }
         }
       }
     }

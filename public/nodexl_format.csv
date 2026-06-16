@@ -1,5 +1,0 @@
-Twitter Screen Name,Vertex 2,Tweet / Text,Followers,Betweenness Centrality,Date,Sentiment
-User_A,User_B,Breaking news about SIMELab research!,1500,0.85,2026-03-21 10:00:00,Pos
-User_B,User_C,Interesting discussion on data ethics.,500,0.45,2026-03-21 11:00:00,Neu
-User_C,User_A,Reply to User_B about NodeXL formatting.,300,0.12,2026-03-21 12:00:00,Neg
-User_D,User_B,Another tweet about AI and society.,2500,0.92,2026-03-21 13:00:00,Pos

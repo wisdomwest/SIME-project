@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { Vertex, Edge } from '../engine/csvParserEnhanced';
 import { Loader2, ZoomIn, Play, Pause, RotateCcw } from 'lucide-react';
 
@@ -58,31 +58,114 @@ const NetworkGraph: React.FC<NetworkGraphProps> = ({ vertices, edges, onNodeSele
     return () => clearInterval(timer);
   }, [isPlaying, edgeTimestamps]);
 
-  useEffect(() => {
-    const cy = cyRef.current;
-    if (!cy || edgeTimestamps.length === 0) return;
+  const baseVerticesRef = useRef<Vertex[]>([]);
+  const baseEdgesRef = useRef<Edge[]>([]);
+  const [rebuildTrigger, setRebuildTrigger] = useState(0);
 
-    const threshold = edgeTimestamps[sliderIndex];
+  // Check if we need to rebuild the base graph
+  const isNewDataset = useMemo(() => {
+    if (vertices.length === 0) return false;
+    if (baseVerticesRef.current.length === 0) return true;
+
+    // Check if the current vertices list is larger than the base vertices list,
+    // or if a significant portion of the vertices are not in the base set.
+    const baseIds = new Set(baseVerticesRef.current.map(v => v.id));
+    let newNodesCount = 0;
+    const sampleSize = Math.min(vertices.length, 50);
+    for (let i = 0; i < sampleSize; i++) {
+      if (!baseIds.has(vertices[i].id)) {
+        newNodesCount++;
+      }
+    }
+    return newNodesCount > sampleSize * 0.1 || vertices.length > baseVerticesRef.current.length;
+  }, [vertices]);
+
+  useEffect(() => {
+    if (isNewDataset) {
+      baseVerticesRef.current = vertices;
+      baseEdgesRef.current = edges;
+      setRebuildTrigger(prev => prev + 1);
+    }
+  }, [isNewDataset, vertices, edges]);
+
+  const effectiveLimit = showFullGraph ? MAX_RENDER_NODES * 4 : MAX_RENDER_NODES;
+
+  // Base graph elements loaded in Cytoscape
+  const baseDisplayVertices = React.useMemo(() => {
+    const verts = baseVerticesRef.current;
+    if (verts.length <= effectiveLimit) return verts;
+    return [...verts]
+      .sort((a, b) => b.degree - a.degree)
+      .slice(0, effectiveLimit);
+  }, [rebuildTrigger, effectiveLimit]);
+
+  const baseDisplayEdges = React.useMemo(() => {
+    const nodeIds = new Set(baseDisplayVertices.map(v => v.id));
+    return baseEdgesRef.current.filter(e => nodeIds.has(e.source) && nodeIds.has(e.target));
+  }, [baseDisplayVertices, rebuildTrigger]);
+
+  // Filtered visible elements (used for footer stats)
+  const visibleVertices = React.useMemo(() => {
+    if (vertices.length <= effectiveLimit) return vertices;
+    return [...vertices]
+      .sort((a, b) => b.degree - a.degree)
+      .slice(0, effectiveLimit);
+  }, [vertices, effectiveLimit]);
+
+  const visibleEdges = React.useMemo(() => {
+    const nodeIds = new Set(visibleVertices.map(v => v.id));
+    return edges.filter(e => nodeIds.has(e.source) && nodeIds.has(e.target));
+  }, [edges, visibleVertices]);
+
+  // Unified callback to apply parent filters + local temporal slider
+  const applyFilters = useCallback(() => {
+    const cy = cyRef.current;
+    if (!cy) return;
+
+    const visibleNodeIds = new Set(vertices.map(v => v.id));
+    const visibleEdgeIds = new Set(edges.map(e => `${e.source}|||${e.target}`));
+    
+    const threshold = edgeTimestamps.length > 0 ? edgeTimestamps[sliderIndex] : null;
 
     cy.batch(() => {
+      // First update edges
       cy.edges().forEach((edge: any) => {
+        const edgeId = edge.id();
         const edgeTime = edge.data('time') || 0;
-        if (edgeTime > threshold) {
-          edge.style('display', 'none');
-        } else {
+        
+        const isGloballyVisible = visibleEdgeIds.has(edgeId);
+        const isTemporallyVisible = threshold === null || edgeTime <= threshold;
+        
+        if (isGloballyVisible && isTemporallyVisible) {
           edge.style('display', 'element');
+        } else {
+          edge.style('display', 'none');
         }
       });
 
+      // Now update nodes
       cy.nodes().forEach((node: any) => {
+        const nodeId = node.id();
+        const isGloballyVisible = visibleNodeIds.has(nodeId);
+        
+        if (!isGloballyVisible) {
+          node.style('display', 'none');
+          return;
+        }
+        
+        // If globally visible, check temporal visibility based on connected edges
         const connectedEdges = node.connectedEdges();
         if (connectedEdges.length === 0) {
           node.style('display', 'element');
           return;
         }
+        
         const hasVisibleEdge = connectedEdges.some((edge: any) => {
+          const edgeId = edge.id();
           const edgeTime = edge.data('time') || 0;
-          return edgeTime <= threshold;
+          const isEdgeGloballyVisible = visibleEdgeIds.has(edgeId);
+          const isEdgeTemporallyVisible = threshold === null || edgeTime <= threshold;
+          return isEdgeGloballyVisible && isEdgeTemporallyVisible;
         });
 
         if (!hasVisibleEdge) {
@@ -92,24 +175,17 @@ const NetworkGraph: React.FC<NetworkGraphProps> = ({ vertices, edges, onNodeSele
         }
       });
     });
-  }, [sliderIndex, edgeTimestamps]);
+  }, [vertices, edges, edgeTimestamps, sliderIndex]);
 
-  const effectiveLimit = showFullGraph ? MAX_RENDER_NODES * 4 : MAX_RENDER_NODES;
-
-  const displayVertices = React.useMemo(() => {
-    if (vertices.length <= effectiveLimit) return vertices;
-    return [...vertices]
-      .sort((a, b) => b.degree - a.degree)
-      .slice(0, effectiveLimit);
-  }, [vertices, effectiveLimit]);
-
-  const displayEdges = React.useMemo(() => {
-    const nodeIds = new Set(displayVertices.map(v => v.id));
-    return edges.filter(e => nodeIds.has(e.source) && nodeIds.has(e.target));
-  }, [edges, displayVertices]);
+  // Apply visibility filters when filtered props or sliderIndex change
+  useEffect(() => {
+    if (isReady) {
+      applyFilters();
+    }
+  }, [isReady, applyFilters]);
 
   const initGraph = useCallback(async () => {
-    if (!containerRef.current || displayVertices.length === 0) return;
+    if (!containerRef.current || baseDisplayVertices.length === 0) return;
 
     // Destroy previous
     if (cyRef.current) {
@@ -133,16 +209,16 @@ const NetworkGraph: React.FC<NetworkGraphProps> = ({ vertices, edges, onNodeSele
       const cytoscape = (await import('cytoscape')).default;
       if (!mountedRef.current || !containerRef.current) return;
 
-      const maxDegree = Math.max(...displayVertices.map(v => v.degree), 1);
+      const maxDegree = Math.max(...baseDisplayVertices.map(v => v.degree), 1);
       const nodeSize = (d: number) => Math.max(3, Math.min(20, 3 + (d / maxDegree) * 17));
 
-      const nodeSet = new Set(displayVertices.map(v => v.id));
-      const filteredEdges = displayEdges
+      const nodeSet = new Set(baseDisplayVertices.map(v => v.id));
+      const filteredEdges = baseDisplayEdges
         .filter(e => nodeSet.has(e.source) && nodeSet.has(e.target))
         .slice(0, 3000); // Hard cap edges
 
       const elements: any[] = [
-        ...displayVertices.map(v => ({
+        ...baseDisplayVertices.map(v => ({
           data: {
             id: v.id,
             label: v.label.length > 12 ? v.label.slice(0, 12) : v.label,
@@ -243,7 +319,7 @@ const NetworkGraph: React.FC<NetworkGraphProps> = ({ vertices, edges, onNodeSele
         nodeRepulsion: () => 8000,
         idealEdgeLength: () => 60,
         gravity: 0.25,
-        numIter: displayVertices.length > 300 ? 300 : 800,
+        numIter: baseDisplayVertices.length > 300 ? 300 : 800,
         coolingFactor: 0.95,
         fit: true,
         padding: 30,
@@ -260,11 +336,11 @@ const NetworkGraph: React.FC<NetworkGraphProps> = ({ vertices, edges, onNodeSele
         setIsRendering(false);
       }
     }
-  }, [displayVertices, displayEdges, onNodeSelect]);
+  }, [baseDisplayVertices, baseDisplayEdges, onNodeSelect]);
 
   useEffect(() => {
     mountedRef.current = true;
-    if (isActive && displayVertices.length > 0) {
+    if (isActive && baseDisplayVertices.length > 0) {
       const timer = setTimeout(() => initGraph(), 50);
       return () => {
         mountedRef.current = false;
@@ -285,7 +361,7 @@ const NetworkGraph: React.FC<NetworkGraphProps> = ({ vertices, edges, onNodeSele
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 z-10 bg-[#0a0f1e]">
           <Loader2 size={24} className="text-[#facc15] animate-spin" />
           <p className="text-xs text-text-muted">
-            Laying out {displayVertices.length.toLocaleString()} nodes...
+            Laying out {baseDisplayVertices.length.toLocaleString()} nodes...
           </p>
         </div>
       )}
@@ -294,7 +370,7 @@ const NetworkGraph: React.FC<NetworkGraphProps> = ({ vertices, edges, onNodeSele
       <div ref={containerRef} className="w-full h-full absolute inset-0" />
 
       {/* Empty state */}
-      {displayVertices.length === 0 && !isRendering && (
+      {baseDisplayVertices.length === 0 && !isRendering && (
         <div className="absolute inset-0 flex items-center justify-center text-text-muted text-sm">
           Upload data to visualize the network graph
         </div>
@@ -347,7 +423,7 @@ const NetworkGraph: React.FC<NetworkGraphProps> = ({ vertices, edges, onNodeSele
       {isReady && (
         <div className="absolute bottom-3 left-3 right-3 flex items-center justify-between text-[10px] text-text-muted bg-[#0a0f1e]/95 px-3 py-1.5 rounded-lg border border-white/5">
           <span>
-            {displayVertices.length.toLocaleString()} nodes · {displayEdges.length.toLocaleString()} edges
+            {visibleVertices.length.toLocaleString()} nodes · {visibleEdges.length.toLocaleString()} edges
             {vertices.length > effectiveLimit && ` (top ${effectiveLimit.toLocaleString()} of ${vertices.length.toLocaleString()})`}
           </span>
           <span className="hidden sm:inline opacity-50">Scroll zoom · Drag pan · Click node</span>

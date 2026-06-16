@@ -12,7 +12,6 @@ Usage:
 
 import sys
 import os
-import tempfile
 import shutil
 from pathlib import Path
 from typing import Optional
@@ -82,6 +81,10 @@ from simelab.disinformation import DisinformationAnalyzer
 from simelab.censorship import CensorshipAnalyzer
 from simelab.export import ExportManager
 from simelab.drift import SemanticDriftAnalyzer
+from simelab.database import (
+    save_full_analysis, get_dataset_meta, list_datasets,
+    get_stored_filepath, delete_dataset,
+)
 
 from fastapi.staticfiles import StaticFiles
 
@@ -110,6 +113,11 @@ analyses: dict = {}
 
 # Default dataset (RejectFinanceBill2024)
 DEFAULT_DATASET = str(Path(__file__).parent.parent.parent / "RejectFinanceBill2024.xlsx")
+
+# Persistent uploads directory — files must survive beyond the request so
+# long-running endpoints like /drift can re-open them.
+UPLOADS_DIR = Path(__file__).parent.parent.parent / "files" / "uploads"
+UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 
 
 # ─── Pydantic Models ─────────────────────────────────────────────────────────
@@ -210,16 +218,118 @@ def _run_full_analysis(filepath: str, dataset_id: str) -> dict:
         "filepath": filepath,
     }
     analyses[dataset_id] = state
+
+    # Persist to SQLite so results survive a server restart
+    _save_analysis_to_sqlite(dataset_id, state)
+
     return state
+
+
+def _save_analysis_to_sqlite(dataset_id: str, state: dict):
+    """Serialize analysis state to the SQLite database."""
+    try:
+        G = state["G"]
+        meta = state["meta"]
+        fe = state["fe"]
+        sa = state["sa"]
+        da = state["da"]
+        ca = state["ca"]
+        ha = state["ha"]
+
+        # Pre-compute feature dict once
+        fe_dict = fe.to_dict()
+
+        # Build serializable vertex list
+        vertices_serial = []
+        for node in G.nodes():
+            attrs = G.nodes[node]
+            label = attrs.get("display_name", "")
+            # Coerce to string — the Excel may contain datetime/time values
+            # in the Name column (data quality edge case)
+            if not isinstance(label, str):
+                label = str(label) if label is not None else ""
+            v = {"id": node, "label": label}
+            for key in ("degree", "in_degree", "out_degree", "betweenness",
+                        "closeness", "eigenvector", "pagerank", "clustering_coefficient",
+                        "followers", "layout_x", "layout_y"):
+                v[key] = attrs.get(key)
+            # Sentiment label
+            v["sentiment"] = sa.labels.get(node, "unknown")
+            # Features from the feature engineer (no node_features attr — use to_dict)
+            v["features"] = fe_dict.get(node, {})
+            vertices_serial.append(v)
+
+        # Build serializable edge list
+        edges_serial = []
+        for src, tgt, data in G.edges(data=True):
+            edge_row = {
+                "source": src,
+                "target": tgt,
+                "weight": float(data["weight"]) if data.get("weight") is not None else None,
+                "date": None,
+                "relation": data.get("edge_type", data.get("Relationship")),
+            }
+            # Find any date-ish value across all edge attributes
+            for raw_key, raw_val in data.items():
+                if raw_val is not None and hasattr(raw_val, "isoformat"):
+                    edge_row["date"] = raw_val.isoformat()
+                    break
+            edges_serial.append(edge_row)
+
+        # Build disinfo scores
+        disinfo_serial = []
+        for node in da.nodes:
+            disinfo_serial.append({
+                "node": node,
+                "disinfo_score": da.scores.get(node, 0),
+                "risk_level": da.risk_labels.get(node, "clean"),
+                "signals": da.signals.get(node, {}),
+            })
+
+        # Build hashtag list
+        hashtag_serial = []
+        for tag, data in ha.authenticity.items():
+            hashtag_serial.append({
+                "hashtag": tag,
+                "score": data["score"],
+                "label": data["label"],
+                "lifecycle_phase": ha.lifecycle.get(tag, "Unknown"),
+            })
+
+        # Build structural holes
+        holes_serial = []
+        for node, si, details in ca.structural_holes:
+            holes_serial.append({
+                "node": node,
+                "display_name": G.nodes[node].get("display_name", ""),
+                "si_score": si,
+                "betweenness": details.get("betweenness", 0),
+                "degree": details.get("degree", 0),
+                "components_after_removal": details.get("components_after_removal", 1),
+                "component_increase": details.get("component_increase", 0),
+                "is_fragmenting": details.get("is_fragmenting", False),
+            })
+
+        serializable = {
+            "graph_stats": meta.get("graph_stats", {}),
+            "overall_metrics": meta.get("overall_metrics", {}),
+            "vertices": vertices_serial,
+            "edges": edges_serial,
+            "disinfo_scores": disinfo_serial,
+            "hashtags": hashtag_serial,
+            "structural_holes": holes_serial,
+        }
+
+        save_full_analysis(dataset_id, meta, serializable)
+        print(f"  [db] Saved analysis '{dataset_id}' to simelab.db ({len(vertices_serial)} vertices, {len(edges_serial)} edges)")
+    except Exception as e:
+        print(f"  [db] Warning: could not save '{dataset_id}' to SQLite: {e}")
 
 
 def _get_analysis(dataset_id: str) -> dict:
     """Get cached analysis or raise 404."""
     if dataset_id not in analyses:
-        # Auto-load default on first request
-        if dataset_id == "default" and os.path.exists(DEFAULT_DATASET):
-            return _run_full_analysis(DEFAULT_DATASET, "default")
-        raise HTTPException(404, f"Dataset '{dataset_id}' not found. Upload first.")
+        raise HTTPException(404, f"Dataset '{dataset_id}' not found. Please upload it first.")
     return analyses[dataset_id]
 
 
@@ -228,9 +338,13 @@ def _get_analysis(dataset_id: str) -> dict:
 @app.get("/api/simelab/health")
 async def health():
     """Health check + loaded datasets."""
+    # Also list datasets stored in SQLite for recovery awareness
+    db_datasets = list_datasets()
+    db_ids = [d["id"] for d in db_datasets]
     return {
         "status": "ok",
         "loaded_datasets": list(analyses.keys()),
+        "db_datasets": db_ids,
         "default_dataset": os.path.basename(DEFAULT_DATASET),
     }
 
@@ -241,18 +355,18 @@ async def upload_file(file: UploadFile = File(...)):
     if not file.filename:
         raise HTTPException(400, "No file provided")
 
-    # Save to temp
     ext = Path(file.filename).suffix.lower()
     if ext not in (".xlsx", ".csv"):
         raise HTTPException(400, f"Unsupported format: {ext}. Use .xlsx or .csv")
 
-    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=ext)
+    dataset_id = Path(file.filename).stem
+    # Save permanently so endpoints like /drift can re-read the file later
+    dest = UPLOADS_DIR / f"{dataset_id}{ext}"
     try:
-        shutil.copyfileobj(file.file, tmp)
-        tmp.close()
+        with open(dest, "wb") as f:
+            shutil.copyfileobj(file.file, f)
 
-        dataset_id = Path(file.filename).stem
-        state = _run_full_analysis(tmp.name, dataset_id)
+        state = _run_full_analysis(str(dest), dataset_id)
 
         # Build summary
         G = state["G"]
@@ -284,11 +398,6 @@ async def upload_file(file: UploadFile = File(...)):
 
     except Exception as e:
         raise HTTPException(500, f"Analysis failed: {str(e)}")
-    finally:
-        try:
-            os.unlink(tmp.name)
-        except Exception:
-            pass
 
 
 @app.get("/api/simelab/features")
@@ -556,16 +665,44 @@ if __name__ == "__main__":
     port = int(os.environ.get("SIMELAB_PORT", "8000"))
     print(f"SIMElab API starting on http://localhost:{port}")
     print(f"Default dataset: {DEFAULT_DATASET}")
-    print(f"Preload: set SIMELAB_PRELOAD=1 to pre-load default on startup")
+
+    # ── Auto-restore datasets from SQLite on startup (async) ────────────
+    # Run in a background thread so uvicorn starts immediately.
+    recovered = list_datasets()
+    if recovered:
+        print(f"Found {len(recovered)} dataset(s) in simelab.db — recovering in background...")
+        import threading
+        def _recover():
+            for ds in recovered:
+                did = ds["id"]
+                fp = get_stored_filepath(did)
+                if fp and os.path.exists(fp):
+                    print(f"  [bg] Recovering '{did}' from {fp}...")
+                    try:
+                        _run_full_analysis(fp, did)
+                        print(f"  [bg] ✓ Recovered '{did}'.")
+                    except Exception as e:
+                        print(f"  [bg] ✗ Recovery of '{did}' failed: {e}")
+                else:
+                    print(f"  [bg] Skipping '{did}': source file not found at '{fp}'")
+        threading.Thread(target=_recover, daemon=True).start()
+    else:
+        print("  No previous datasets in simelab.db (fresh start).")
 
     # Optional pre-load via env var
     if os.environ.get("SIMELAB_PRELOAD") == "1" and os.path.exists(DEFAULT_DATASET):
-        print("Pre-loading default dataset (this may take ~60s)...")
-        try:
-            _run_full_analysis(DEFAULT_DATASET, "default")
-            print("  Default dataset loaded.")
-        except Exception as e:
-            print(f"  Warning: Could not pre-load default: {e}")
+        if "default" not in analyses:
+            print("Pre-loading default dataset in background (this may take ~60s)...")
+            import threading
+            def _preload():
+                try:
+                    _run_full_analysis(DEFAULT_DATASET, "default")
+                    print("  Default dataset loaded.")
+                except Exception as e:
+                    print(f"  Warning: Could not pre-load default: {e}")
+            threading.Thread(target=_preload, daemon=True).start()
+        else:
+            print("  Default dataset already recovered from SQLite.")
     else:
         print("  Default dataset will lazy-load on first request.")
 

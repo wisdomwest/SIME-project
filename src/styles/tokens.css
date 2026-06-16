@@ -1,0 +1,105 @@
+/*
+ * tokens.css — Single source of truth for color, type, and motion.
+ * Editorial intelligence palette: warm paper, deep ink, single ember accent.
+ * Components MUST NOT use raw hex values. Always reach for these.
+ */
+
+:root {
+  /* ── Color: paper & ink ─────────────────────────────────────────── */
+  --paper: #F2EDE2;
+  --paper-2: #E8E1D2;
+  --paper-3: #DBD3C0;
+  --ink: #1A1A1A;
+  --ink-soft: #3A3A3A;
+  --ink-mute: #6B6B6B;
+  --rule: rgba(26, 26, 26, 0.16);
+  --rule-strong: rgba(26, 26, 26, 0.40);
+  --grid: rgba(26, 26, 26, 0.08);
+
+  /* ── Color: single accent ──────────────────────────────────────── */
+  --ember: #C2410C;
+  --ember-soft: rgba(194, 65, 12, 0.12);
+  --ember-strong: #9A330A;
+
+  /* ── Color: semantic signals (muted, not neon) ─────────────────── */
+  --signal-pos: #0F5132;
+  --signal-pos-soft: rgba(15, 81, 50, 0.10);
+  --signal-neg: #7F1D1D;
+  --signal-neg-soft: rgba(127, 29, 29, 0.10);
+  --signal-neu: #3A3A3A;
+  --signal-neu-soft: rgba(58, 58, 58, 0.10);
+  --signal-warn: #92400E;
+  --signal-warn-soft: rgba(146, 64, 14, 0.10);
+
+  /* ── Type ─────────────────────────────────────────────────────── */
+  --font-display: 'Fraunces', 'Times New Roman', serif;
+  --font-body: 'Inter', system-ui, -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', 'SF Mono', Menlo, monospace;
+
+  /* ── Motion ───────────────────────────────────────────────────── */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --t-fast: 120ms;
+  --t-med: 220ms;
+  --t-slow: 420ms;
+
+  /* ── Layout ───────────────────────────────────────────────────── */
+  --gutter: 24px;
+  --sidebar-w: 280px;
+  --content-max: 1280px;
+  --radius: 2px;
+  --radius-pill: 999px;
+}
+
+/* ── Dark Mode Overrides ────────────────────────────────────────── */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #0C0B0A;
+    --paper-2: #141312;
+    --paper-3: #201F1E;
+    --ink: #E6E1D8;
+    --ink-soft: #BAB4A8;
+    --ink-mute: #807B72;
+    --rule: rgba(230, 225, 216, 0.12);
+    --rule-strong: rgba(230, 225, 216, 0.28);
+    --grid: rgba(230, 225, 216, 0.05);
+
+    --ember: #F97316;
+    --ember-soft: rgba(249, 115, 22, 0.12);
+    --ember-strong: #FF8838;
+
+    --signal-pos: #198754;
+    --signal-pos-soft: rgba(25, 135, 84, 0.12);
+    --signal-neg: #EA8686;
+    --signal-neg-soft: rgba(234, 134, 134, 0.12);
+    --signal-neu: #BAB4A8;
+    --signal-neu-soft: rgba(186, 180, 168, 0.12);
+    --signal-warn: #F59E0B;
+    --signal-warn-soft: rgba(245, 158, 11, 0.12);
+  }
+}
+
+:root.dark, body.dark {
+  --paper: #0C0B0A;
+  --paper-2: #141312;
+  --paper-3: #201F1E;
+  --ink: #E6E1D8;
+  --ink-soft: #BAB4A8;
+  --ink-mute: #807B72;
+  --rule: rgba(230, 225, 216, 0.12);
+  --rule-strong: rgba(230, 225, 216, 0.28);
+  --grid: rgba(230, 225, 216, 0.05);
+
+  --ember: #F97316;
+  --ember-soft: rgba(249, 115, 22, 0.12);
+  --ember-strong: #FF8838;
+
+  --signal-pos: #198754;
+  --signal-pos-soft: rgba(25, 135, 84, 0.12);
+  --signal-neg: #EA8686;
+  --signal-neg-soft: rgba(234, 134, 134, 0.12);
+  --signal-neu: #BAB4A8;
+  --signal-neu-soft: rgba(186, 180, 168, 0.12);
+  --signal-warn: #F59E0B;
+  --signal-warn-soft: rgba(245, 158, 11, 0.12);
+}

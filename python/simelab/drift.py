@@ -101,9 +101,12 @@ class SemanticDriftAnalyzer:
             df["parsed_date"] = range(len(df))
 
         self.df = df[[text_col, "parsed_date"]].rename(columns={text_col: "tweet_text"})
+        
+        # De-duplicate to analyze unique statements in the campaign context
+        self.df = self.df.drop_duplicates(subset=["tweet_text"])
         return self.df
 
-    def analyze(self, api_key: str, sample_size: int = 40) -> Dict[str, Any]:
+    def analyze(self, api_key: str, sample_size: int = 5000) -> Dict[str, Any]:
         """
         Run the semantic drift analysis.
         Divides tweets chronologically, samples, and queries LLM.
@@ -119,18 +122,31 @@ class SemanticDriftAnalyzer:
         early_df = self.df.iloc[:midpoint]
         late_df = self.df.iloc[midpoint:]
 
-        # Sample from each half to stay within token limits
-        early_sample = early_df.sample(min(sample_size, len(early_df)), random_state=42)
-        late_sample = late_df.sample(min(sample_size, len(late_df)), random_state=42)
+        current_sample_size = sample_size
+        last_error = None
 
-        # Concatenate samples into formatted strings
-        early_text = "\n".join(f"- {row['tweet_text']}" for _, row in early_sample.iterrows())
-        late_text = "\n".join(f"- {row['tweet_text']}" for _, row in late_sample.iterrows())
+        # Try up to 2 times. If the first fails/times out, we retry with a smaller sample size (half)
+        for attempt in range(2):
+            try:
+                # Chronologically sort/keep subsets to maintain timeline flow for LLM analysis
+                if len(early_df) <= current_sample_size:
+                    early_sample = early_df
+                else:
+                    early_sample = early_df.sample(current_sample_size, random_state=42 + attempt).sort_values("parsed_date")
 
-        # Construct prompt
-        prompt = f"""
+                if len(late_df) <= current_sample_size:
+                    late_sample = late_df
+                else:
+                    late_sample = late_df.sample(current_sample_size, random_state=42 + attempt).sort_values("parsed_date")
+
+                # Concatenate samples into formatted strings
+                early_text = "\n".join(f"- {row['tweet_text']}" for _, row in early_sample.iterrows())
+                late_text = "\n".join(f"- {row['tweet_text']}" for _, row in late_sample.iterrows())
+
+                # Construct prompt
+                prompt = f"""
 You are a senior social media intelligence analyst at SIMElab Africa (USIU-Africa, Nairobi).
-Analyze these two sets of sampled tweets from a campaign (which may contain English, Swahili, and Sheng code-switching) to detect semantic drift and co-optation.
+Analyze these two sets of tweets from a campaign (which may contain English, Swahili, and Sheng code-switching) to detect semantic drift and co-optation.
 
 Early Tweets (Campaign Origin / Growth):
 {early_text}
@@ -154,111 +170,106 @@ Return ONLY a JSON object with this exact structure:
 Return ONLY the JSON. Do not include markdown code blocks, do not write '```json', and do not append extra text.
 """
 
-        # Call LLM API (LLM or NVIDIA NIM or TokenRouter) using standard urllib
-        tr_env_key = read_env_key("TOKENROUTER_API_KEY")
-        nv_env_key = read_env_key("NVIDIA_API_KEY")
-        ds_env_key = read_env_key("DEEPSEEK_API_KEY")
+                # Call LLM API (TokenRouter / NVIDIA NIM / DeepSeek) using standard urllib
+                tr_env_key = read_env_key("TOKENROUTER_API_KEY")
+                nv_env_key = read_env_key("NVIDIA_API_KEY")
+                ds_env_key = read_env_key("DEEPSEEK_API_KEY")
 
-        is_tokenrouter = api_key.startswith("tr-") or tr_env_key != ""
-        is_nvidia = api_key.startswith("nvapi-") or nv_env_key != ""
+                is_tokenrouter = api_key.startswith("tr-") or tr_env_key != ""
+                is_nvidia = api_key.startswith("nvapi-") or nv_env_key != ""
 
-        if is_tokenrouter:
-            url = read_env_key("TOKENROUTER_API_URL", "https://api.tokenrouter.com/v1/chat/completions")
-            model = read_env_key("TOKENROUTER_MODEL", "MiniMax-M3")
-            auth_key = api_key if api_key.startswith("tr-") else (tr_env_key or api_key)
-        elif is_nvidia:
-            url = read_env_key("NVIDIA_API_URL", "https://integrate.api.nvidia.com/v1/chat/completions")
-            model = read_env_key("NVIDIA_MODEL", "meta/llama-3.1-70b-instruct")
-            auth_key = api_key if api_key.startswith("nvapi-") else (nv_env_key or api_key)
-        else:
-            url = "https://api.deepseek.com/v1/chat/completions"
-            model = "deepseek-chat"
-            auth_key = api_key or ds_env_key
-
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {auth_key}",
-        }
-        body = {
-            "model": model,
-            "messages": [
-                {"role": "user", "content": prompt}
-            ],
-            "temperature": 0.2,
-            "max_tokens": 10000,
-            "stream": False,
-        }
-
-        req = urllib.request.Request(
-            url,
-            data=json.dumps(body).encode("utf-8"),
-            headers=headers,
-            method="POST"
-        )
-
-        try:
-            with urllib.request.urlopen(req, timeout=120) as response:
-                res_body = response.read().decode("utf-8")
-                res_data = json.loads(res_body)
-                choice = res_data["choices"][0]
-                finish_reason = choice.get("finish_reason", "")
-                content = choice["message"]["content"].strip()
-
-                # Detect truncation: model hit token limit before finishing JSON
-                if finish_reason == "length":
-                    raise ValueError(
-                        "LLM response was truncated (finish_reason=length). "
-                        "The model ran out of tokens before completing the JSON. "
-                        "Try reducing sample_size or contact support."
-                    )
-                
-                # Strip <think>...</think> blocks from deep-thinking LLMs.
-                # Strategy: find the last </think> tag and take everything after it.
-                # If </think> is absent but <think> is present, find the closing >
-                # of the last tag and take content from there.
-                if "</think>" in content:
-                    content = content.split("</think>")[-1].strip()
-                elif "<think>" in content:
-                    # Find the end of the opening tag itself
-                    think_end = content.find(">", content.rfind("<think>"))
-                    if think_end != -1:
-                        content = content[think_end + 1:].strip()
-
-                # Guard: if content is empty after stripping, raise a useful error
-                if not content:
-                    raise ValueError(
-                        "LLM returned an empty content string after stripping think-tags. "
-                        "The model may have only returned reasoning without a final answer. "
-                        "Try again or use a different model."
-                    )
-
-                # Robustly extract JSON block from content
-                start = content.find('{')
-                end = content.rfind('}')
-                if start != -1 and end != -1 and end > start:
-                    json_str = content[start:end+1]
+                if is_tokenrouter:
+                    url = read_env_key("TOKENROUTER_API_URL", "https://api.tokenrouter.com/v1/chat/completions")
+                    model = read_env_key("TOKENROUTER_MODEL", "MiniMax-M3")
+                    auth_key = api_key if api_key.startswith("tr-") else (tr_env_key or api_key)
+                elif is_nvidia:
+                    url = read_env_key("NVIDIA_API_URL", "https://integrate.api.nvidia.com/v1/chat/completions")
+                    model = read_env_key("NVIDIA_MODEL", "meta/llama-3.1-70b-instruct")
+                    auth_key = api_key if api_key.startswith("nvapi-") else (nv_env_key or api_key)
                 else:
-                    json_str = content
+                    url = "https://api.deepseek.com/v1/chat/completions"
+                    model = "deepseek-chat"
+                    auth_key = api_key or ds_env_key
 
-                try:
+                headers = {
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {auth_key}",
+                }
+                body = {
+                    "model": model,
+                    "messages": [
+                        {"role": "user", "content": prompt}
+                    ],
+                    "temperature": 0.2,
+                    "max_tokens": 10000,
+                    "stream": False,
+                }
+
+                req = urllib.request.Request(
+                    url,
+                    data=json.dumps(body).encode("utf-8"),
+                    headers=headers,
+                    method="POST"
+                )
+
+                with urllib.request.urlopen(req, timeout=120) as response:
+                    res_body = response.read().decode("utf-8")
+                    res_data = json.loads(res_body)
+                    choice = res_data["choices"][0]
+                    finish_reason = choice.get("finish_reason", "")
+                    content = choice["message"]["content"].strip()
+
+                    # Detect truncation: model hit token limit before finishing JSON
+                    if finish_reason == "length":
+                        raise ValueError(
+                            "LLM response was truncated (finish_reason=length). "
+                            "The model ran out of tokens before completing the JSON."
+                        )
+                    
+                    # Strip <think>...</think> blocks from deep-thinking LLMs.
+                    if "</think>" in content:
+                        content = content.split("</think>")[-1].strip()
+                    elif "<think>" in content:
+                        # Find the end of the opening tag itself
+                        think_end = content.find(">", content.rfind("<think>"))
+                        if think_end != -1:
+                            content = content[think_end + 1:].strip()
+
+                    # Guard: if content is empty after stripping, raise a useful error
+                    if not content:
+                        raise ValueError("LLM returned an empty content string after stripping think-tags.")
+
+                    # Robustly extract JSON block from content
+                    start = content.find('{')
+                    end = content.rfind('}')
+                    if start != -1 and end != -1 and end > start:
+                        json_str = content[start:end+1]
+                    else:
+                        json_str = content
+
                     parsed_result = json.loads(json_str)
-                except Exception as je:
-                    print("--- LLM JSON PARSE ERROR ---")
-                    print("Raw Content:", content)
-                    print("-----------------------------")
-                    raise ValueError(f"Failed to parse LLM response as JSON: {str(je)}. Raw response started with: {content[:250]}")
+                    parsed_result["sample_size"] = len(early_sample) + len(late_sample)
+                    parsed_result["total_tweets"] = total_tweets
+                    return parsed_result
 
-                parsed_result["sample_size"] = len(early_sample) + len(late_sample)
-                parsed_result["total_tweets"] = total_tweets
-                return parsed_result
+            except urllib.error.HTTPError as e:
+                last_error = e
+                # HTTP errors represent server/credential issues; don't retry, raise immediately
+                break
+            except Exception as e:
+                last_error = e
+                # For network timeouts or connection resets, reduce sample size and retry
+                current_sample_size = max(10, current_sample_size // 2)
+                print(f"Semantic drift analysis attempt {attempt + 1} failed: {str(e)}. Retrying with sample size {current_sample_size}...")
 
-        except urllib.error.HTTPError as e:
-            err_msg = e.read().decode("utf-8")
+        # If we reached here, raise the last error
+        if isinstance(last_error, urllib.error.HTTPError):
+            err_msg = last_error.read().decode("utf-8")
             try:
                 err_data = json.loads(err_msg)
                 detail = err_data.get("error", {}).get("message", err_msg)
             except Exception:
                 detail = err_msg
-            raise ValueError(f"LLM API error ({e.code}): {detail}")
-        except Exception as e:
-            raise ValueError(f"Failed to query LLM API: {str(e)}")
+            raise ValueError(f"LLM API error ({last_error.code}): {detail}")
+        else:
+            raise ValueError(f"Failed to query LLM API: {str(last_error)}")

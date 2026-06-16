@@ -11,13 +11,22 @@ export interface ComputedMetrics extends NetworkMetrics {
 }
 
 export function computeSNAMetrics(vertices: Vertex[], edges: Edge[]): ComputedMetrics {
-  const graph = new Graph({ multi: false, allowSelfLoops: false });
+  const graph = new Graph({ type: 'directed', multi: false, allowSelfLoops: false });
   const vertexMap = new Map<string, Vertex>();
 
-  // Build graph
+  // Find all nodes that participate in at least one edge
+  const activeNodes = new Set<string>();
+  for (const e of edges) {
+    activeNodes.add(e.source);
+    activeNodes.add(e.target);
+  }
+
+  // Build graph with active nodes only (ignoring isolated vertices)
   for (const v of vertices) {
-    graph.addNode(v.id);
-    vertexMap.set(v.id, v);
+    if (activeNodes.has(v.id)) {
+      graph.addNode(v.id);
+      vertexMap.set(v.id, v);
+    }
   }
   for (const e of edges) {
     if (graph.hasNode(e.source) && graph.hasNode(e.target)) {
@@ -45,9 +54,10 @@ export function computeSNAMetrics(vertices: Vertex[], edges: Edge[]): ComputedMe
 
   // === BETWEENNESS CENTRALITY (Brandes algorithm via graphology) ===
   try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { betweennessCentrality } = require('graphology-metrics/centrality/betweenness');
-    const bc = betweennessCentrality(graph, { normalized: true });
-    for (const [node, val] of bc) {
+    const bc: Record<string, number> = betweennessCentrality(graph, { normalized: true });
+    for (const [node, val] of Object.entries(bc)) {
       const v = vertexMap.get(node);
       if (v) v.betweenness = val;
     }
