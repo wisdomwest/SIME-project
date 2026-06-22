@@ -104,6 +104,7 @@ const useSocialDataState = () => {
   const [computedMetrics, setComputedMetrics] = useState<ComputedMetrics | null>(null);
   const [aiInsights, setAIInsights] = useState<AIInsights | null>(null);
   const [driftData, setDriftData] = useState<import('../services/pythonApi').DriftData | null>(null);
+  const [commercialData, setCommercialData] = useState<import('../services/pythonApi').CommercialData | null>(null);
   const [pythonDatasetId, setPythonDatasetId] = useState<string | null>(null);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [aiAnalysisResult, setAiAnalysisResult] = useState<string | null>(null);
@@ -135,6 +136,7 @@ const useSocialDataState = () => {
       if (saved.computedMetrics) setComputedMetrics(saved.computedMetrics as ComputedMetrics);
       if (saved.aiInsights) setAIInsights(saved.aiInsights as AIInsights);
       if (saved.driftData) setDriftData(saved.driftData as import('../services/pythonApi').DriftData);
+      if (saved.commercialData) setCommercialData(saved.commercialData as import('../services/pythonApi').CommercialData);
       if (saved.chatMessages) setChatMessages(saved.chatMessages as ChatMessage[]);
       if (saved.aiAnalysisResult !== undefined) setAiAnalysisResult(saved.aiAnalysisResult);
       if (saved.pythonDatasetId) setPythonDatasetId(saved.pythonDatasetId);
@@ -210,12 +212,13 @@ const useSocialDataState = () => {
         computedMetrics,
         aiInsights,
         driftData,
+        commercialData,
         chatMessages,
         aiAnalysisResult,
         pythonDatasetId,
       });
     }, 1000);
-  }, [graphData, computedMetrics, aiInsights, driftData, chatMessages, aiAnalysisResult, pythonDatasetId]);
+  }, [graphData, computedMetrics, aiInsights, driftData, commercialData, chatMessages, aiAnalysisResult, pythonDatasetId]);
 
   // Auto-save when state changes
   useEffect(() => { scheduleSave(); }, [scheduleSave]);
@@ -224,6 +227,7 @@ const useSocialDataState = () => {
     setIsLoading(true);
     setError(null);
     setDriftData(null);
+    setCommercialData(null);
     setChatMessages([]);
     setAiAnalysisResult(null);
     clearSession();
@@ -387,6 +391,7 @@ const useSocialDataState = () => {
     setComputedMetrics(null);
     setAIInsights(null);
     setDriftData(null);
+    setCommercialData(null);
     setChatMessages([]);
     setAiAnalysisResult(null);
     clearSession();
@@ -406,6 +411,8 @@ const useSocialDataState = () => {
     aiInsights,
     driftData,
     setDriftData,
+    commercialData,
+    setCommercialData,
     chatMessages,
     setChatMessages,
     aiAnalysisResult,

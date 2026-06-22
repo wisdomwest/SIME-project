@@ -81,6 +81,7 @@ from simelab.disinformation import DisinformationAnalyzer
 from simelab.censorship import CensorshipAnalyzer
 from simelab.export import ExportManager
 from simelab.drift import SemanticDriftAnalyzer
+from simelab.commercial import CommercialAnalyzer
 from simelab.database import (
     save_full_analysis, get_dataset_meta, list_datasets,
     get_stored_filepath, delete_dataset,
@@ -571,6 +572,29 @@ async def get_semantic_drift(dataset_id: str = Query("default"), api_key: str = 
         return result
     except Exception as e:
         raise HTTPException(500, f"Semantic drift analysis failed: {str(e)}")
+
+
+class CommercialRequest(BaseModel):
+    dataset_id: str = "default"
+    api_key: str = ""
+    base_keywords: str = ""
+    use_ai: bool = True
+
+@app.post("/api/simelab/commercial")
+async def get_commercial(req: CommercialRequest):
+    """Run commercial intent and co-optation analysis."""
+    env_key = read_env_key("TOKENROUTER_API_KEY") or read_env_key("NVIDIA_API_KEY") or read_env_key("DEEPSEEK_API_KEY")
+    key_to_use = req.api_key if req.api_key else (env_key if req.use_ai else "")
+
+    state = _get_analysis(req.dataset_id)
+    filepath = state["filepath"]
+
+    try:
+        analyzer = CommercialAnalyzer(filepath)
+        result = analyzer.analyze(api_key=key_to_use, base_keywords=req.base_keywords)
+        return result
+    except Exception as e:
+        raise HTTPException(500, f"Commercial analysis failed: {str(e)}")
 
 
 @app.post("/api/simelab/compare")

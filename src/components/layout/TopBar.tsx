@@ -99,6 +99,11 @@ export function TopBar({ hasData }: { hasData: boolean }) {
               onClick={() => navigate({ name: 'drift', datasetId })}
             />
             <NavLink
+              label="Commercial"
+              active={route.name === 'commercial'}
+              onClick={() => navigate({ name: 'commercial', datasetId })}
+            />
+            <NavLink
               label="Report"
               active={route.name === 'report'}
               onClick={() => navigate({ name: 'report', datasetId })}

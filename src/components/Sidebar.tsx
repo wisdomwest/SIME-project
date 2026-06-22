@@ -100,7 +100,7 @@ const Sidebar: React.FC<SidebarProps> = ({
                 </div>
                 <div className="flex items-start gap-2">
                   <CheckCircle2 size={12} className="text-accent-secondary mt-0.5" />
-                  <p className="text-[10px] text-text-secondary">AI-powered insights & bot detection</p>
+                  <p className="text-[10px] text-text-secondary">Semantic insights & automated detection</p>
                 </div>
               </div>
             </div>

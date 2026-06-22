@@ -118,6 +118,21 @@ export interface DriftData {
   total_tweets: number;
 }
 
+export interface CommercialData {
+  total_tweets: number;
+  commercial_tweets: number;
+  percentage_commercial: number;
+  category_counts: Record<string, number>;
+  trend: Array<{ date: string; total: number; commercial: number }>;
+  ai_analysis: {
+    commercial_cooptation_level: number;
+    main_tactics: string[];
+    bot_vs_genuine: string;
+    analysis_text: string;
+  } | null;
+  expanded_keywords: string[];
+}
+
 // ─── API Functions ──────────────────────────────────────────────────────────
 
 async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
@@ -129,8 +144,8 @@ async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
   return res.json();
 }
 
-export async function getHealth(): Promise<{ status: string; loaded_datasets: string[] }> {
-  return apiFetch('/health');
+export async function getHealth(signal?: AbortSignal): Promise<{ status: string; loaded_datasets: string[] }> {
+  return apiFetch('/health', { signal });
 }
 
 export async function uploadFile(file: File): Promise<AnalysisSummary> {
@@ -159,8 +174,16 @@ export async function getHashtags(datasetId = 'default'): Promise<HashtagData> {
   return apiFetch(`/hashtags?dataset_id=${encodeURIComponent(datasetId)}`);
 }
 
-export async function getSemanticDrift(datasetId = 'default', apiKey: string): Promise<DriftData> {
+export async function getSemanticDrift(datasetId: string, apiKey: string): Promise<DriftData> {
   return apiFetch(`/drift?dataset_id=${encodeURIComponent(datasetId)}&api_key=${encodeURIComponent(apiKey)}`);
+}
+
+export async function getCommercial(datasetId: string, apiKey: string, baseKeywords: string, useAi: boolean) {
+  return apiFetch('/commercial', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ dataset_id: datasetId, api_key: apiKey, base_keywords: baseKeywords, use_ai: useAi }),
+  });
 }
 
 export async function compareDatasets(datasetId1: string, datasetId2: string): Promise<ComparisonData> {

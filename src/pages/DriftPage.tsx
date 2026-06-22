@@ -54,7 +54,7 @@ function DriftView() {
   return (
     <div className="px-8 py-10 max-w-[1280px] mx-auto space-y-10">
       <header className="space-y-3">
-        <Eyebrow accent>Drift · LLM semantic analysis</Eyebrow>
+        <Eyebrow accent>Drift · Semantic analysis</Eyebrow>
         <h1
           className="font-display text-4xl text-ink font-light tracking-[-0.02em]"
           style={{ fontVariationSettings: "'opsz' 96, 'SOFT' 100" }}
@@ -62,7 +62,7 @@ function DriftView() {
           Semantic Drift & Narrative Evolution Analysis
         </h1>
         <p className="text-base text-ink-soft max-w-2xl leading-relaxed">
-          Analyzes the chronological subsets of the campaign using LLM models (TokenRouter, NVIDIA NIM, or DeepSeek) to identify narrative shifts, evaluate structural Swahili / Sheng slang integration, and detect narrative co-optation by external actors.
+          Analyzes the chronological subsets of the campaign using advanced semantic models to identify narrative shifts, evaluate structural Swahili / Sheng slang integration, and detect narrative co-optation by external actors.
         </p>
       </header>
 
@@ -84,7 +84,7 @@ function DriftView() {
       )}
 
       {(showKey || (!config && !data)) && (
-        <Panel eyebrow={<Eyebrow>API key</Eyebrow>} title="LLM credentials">
+        <Panel eyebrow={<Eyebrow>API key</Eyebrow>} title="Provider credentials">
           <p className="text-sm text-ink-soft mb-4">
             Your key is stored in <code className="font-mono text-ember">localStorage</code> only. It never
             touches our servers.
@@ -120,7 +120,7 @@ function DriftView() {
       {loading && (
         <div className="p-20 flex flex-col items-center gap-3">
           <Loader2 size={20} className="text-ember animate-spin" />
-          <p className="text-sm text-ink-soft">Sampling tweets and querying LLM…</p>
+          <p className="text-sm text-ink-soft">Sampling tweets and querying semantic models…</p>
           <p className="text-[10px] text-ink-mute font-mono">Early / late split · Sheng/Swahili scan · JSON contract</p>
         </div>
       )}
@@ -189,7 +189,7 @@ function DriftView() {
             </Panel>
           </div>
 
-          <Panel eyebrow={<Eyebrow>Analyst assessment</Eyebrow>} title="From the LLM">
+          <Panel eyebrow={<Eyebrow>Analyst assessment</Eyebrow>} title="Expert Analysis">
             <p className="text-sm text-ink leading-relaxed whitespace-pre-wrap font-body">
               {data.analysis_text}
             </p>

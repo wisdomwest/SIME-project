@@ -35,7 +35,7 @@ export function AiBar() {
               ? 'border-ember text-ember bg-ember-soft'
               : 'border-transparent text-ink-soft hover:text-ink hover:bg-paper-3'
           }`}
-          title="AI Analyst Chat"
+          title="Analyst Chat"
         >
           <MessageSquare size={16} />
         </button>
@@ -50,7 +50,7 @@ export function AiBar() {
               ? 'border-ember text-ember bg-ember-soft'
               : 'border-transparent text-ink-soft hover:text-ink hover:bg-paper-3'
           }`}
-          title="AI Narrative Analysis"
+          title="Semantic Narrative Analysis"
         >
           <Sparkles size={16} />
         </button>
@@ -68,7 +68,7 @@ export function AiBar() {
                   activeTab === 'chat' ? 'text-ink border-ember' : 'text-ink-mute border-transparent hover:text-ink-soft'
                 }`}
               >
-                AI Chat
+                Chat
               </button>
               <button
                 onClick={() => setActiveTab('analysis')}
@@ -76,7 +76,7 @@ export function AiBar() {
                   activeTab === 'analysis' ? 'text-ink border-ember' : 'text-ink-mute border-transparent hover:text-ink-soft'
                 }`}
               >
-                AI Analysis
+                Analysis
               </button>
             </div>
             <button

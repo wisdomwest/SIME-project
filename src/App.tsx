@@ -10,6 +10,7 @@ import { CensorshipPage } from './pages/CensorshipPage';
 import { DriftPage } from './pages/DriftPage';
 import { ReportPage } from './pages/ReportPage';
 import { DocsPage } from './pages/DocsPage';
+import { CommercialPage } from './pages/CommercialPage';
 import { AccountDrawer } from './components/insights/AccountDrawer';
 import { AppShell } from './components/layout/AppShell';
 import { useUrlState } from './app/useUrlState';
@@ -71,6 +72,7 @@ const App: React.FC = () => {
       case 'hashtags': return <HashtagsPage />;
       case 'censorship': return <CensorshipPage />;
       case 'drift': return <DriftPage />;
+      case 'commercial': return <CommercialPage />;
       case 'report': return <ReportPage />;
       case 'docs': return <DocsPage />;
       case 'overview':

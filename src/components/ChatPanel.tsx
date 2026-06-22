@@ -62,7 +62,7 @@ ${top5Btw}
 COMMUNITIES: ${clusters.size} communities detected
 ${[...clusters.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5).map(([cid, size]) => `  - Community ${cid + 1}: ${size} members`).join('\n')}
 
-${insights ? `AI INSIGHTS:
+${insights ? `SEMANTIC INSIGHTS:
 - Bot activity score: ${Math.round(insights.botActivityScore * 100)}%
 - Polarization index: ${Math.round(insights.polarizationIndex * 100)}%
 - Key narratives: ${insights.keyNarratives.slice(0, 3).map(n => n.theme).join(', ')}
@@ -210,7 +210,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ graphData, computedMetrics, aiIns
               <Bot size={16} className="text-[#8b5cf6]" />
             </div>
             <div>
-              <h3 className="text-sm font-bold tracking-tight">AI Analyst Chat</h3>
+              <h3 className="text-sm font-bold tracking-tight">Analyst Chat</h3>
               <p className="text-[10px] text-text-muted">
                 {config ? `${config.provider === 'deepseek' ? 'DeepSeek' : 'NVIDIA NIM'} • ${config.model}` : 'No API key configured'}
               </p>
@@ -360,7 +360,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ graphData, computedMetrics, aiIns
               <div className="flex items-center justify-between mb-6">
                 <div className="flex items-center gap-3">
                   <Key size={18} className="text-[#8b5cf6]" />
-                  <h3 className="text-sm font-bold">LLM API Settings</h3>
+                  <h3 className="text-sm font-bold">API Settings</h3>
                 </div>
                 <button onClick={() => setShowSettings(false)} className="p-1 hover:bg-white/5 rounded-lg">
                   <X size={18} />

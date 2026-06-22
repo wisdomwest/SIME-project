@@ -15,6 +15,7 @@ export type Route =
   | { name: 'hashtags'; datasetId: string }
   | { name: 'censorship'; datasetId: string }
   | { name: 'drift'; datasetId: string }
+  | { name: 'commercial'; datasetId: string }
   | { name: 'report'; datasetId: string }
   | { name: 'account'; datasetId: string; nodeId: string }
   | { name: 'docs' }
@@ -72,6 +73,7 @@ function parseHash(hash: string): { route: Route; extras: RouteExtras } {
     if (page === 'hashtags') return { route: { name: 'hashtags', ...base }, extras };
     if (page === 'censorship') return { route: { name: 'censorship', ...base }, extras };
     if (page === 'drift') return { route: { name: 'drift', ...base }, extras };
+    if (page === 'commercial') return { route: { name: 'commercial', ...base }, extras };
     if (page === 'report') return { route: { name: 'report', ...base }, extras };
     if (page === 'docs') return { route: { name: 'docs' }, extras };
     if (page === 'account' && segs[3]) {
@@ -111,6 +113,7 @@ function buildHash(route: Route, extras: RouteExtras): string {
       route.name === 'hashtags' ? '/hashtags' :
       route.name === 'censorship' ? '/censorship' :
       route.name === 'drift' ? '/drift' :
+      route.name === 'commercial' ? '/commercial' :
       route.name === 'report' ? '/report' :
       route.name === 'account' ? `/account/${encodeURIComponent(route.nodeId)}` : '';
     path = `/d/${d}${p}`;

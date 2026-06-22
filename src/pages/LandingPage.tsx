@@ -208,7 +208,7 @@ const FEATURES = [
   },
   {
     title: 'Narrative drift',
-    body: 'An LLM pass that samples tweets from the early and late halves of the campaign and reports whether the conversation was co-opted.',
+    body: 'A semantic pass that samples tweets from the early and late halves of the campaign and reports whether the conversation was co-opted.',
     icon: Network,
   },
 ];

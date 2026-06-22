@@ -89,7 +89,7 @@ const AIInsightsPanel: React.FC<AIInsightsPanelProps> = ({ insights, computedMet
           pythonContext += `- Artificial Campaign Probability Ratio: ${(hashtags.artificial_ratio * 100).toFixed(1)}%\n`;
         }
       } catch (err) {
-        console.warn("Could not fetch python context for AI Insights:", err);
+        console.warn("Could not fetch python context for Semantic Insights:", err);
       }
 
       const context = buildLLMContext(computedMetrics, insights, pythonContext, driftData);
@@ -106,7 +106,7 @@ const AIInsightsPanel: React.FC<AIInsightsPanelProps> = ({ insights, computedMet
   if (!insights) return null;
   return (
     <div className="space-y-6">
-      {/* LLM-powered insights section */}
+      {/* Semantic insights section */}
       <div className="bg-gradient-to-r from-[#0f172a]/50 to-[#8b5cf6]/5 border border-[#8b5cf6]/20 rounded-2xl p-6">
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-3">
@@ -114,7 +114,7 @@ const AIInsightsPanel: React.FC<AIInsightsPanelProps> = ({ insights, computedMet
               <Sparkles size={16} className="text-[#8b5cf6]" />
             </div>
             <div>
-              <h3 className="text-sm font-bold tracking-tight">AI-Powered Analysis</h3>
+              <h3 className="text-sm font-bold tracking-tight">Semantic Analysis</h3>
               <p className="text-[10px] text-text-muted">
                 Uses TokenRouter / NVIDIA NIM / DeepSeek for deeper context
                 {driftData && <span className="ml-2 px-1.5 py-0.5 bg-[#facc15]/10 text-[#facc15] rounded text-[9px] font-bold">+ Drift Context</span>}
@@ -126,7 +126,7 @@ const AIInsightsPanel: React.FC<AIInsightsPanelProps> = ({ insights, computedMet
               onClick={handleGenerateAI}
               className="flex items-center gap-2 bg-[#8b5cf6] hover:bg-[#7c3aed] text-white font-bold py-2.5 px-4 rounded-xl text-xs transition-all active:scale-95 disabled:opacity-50"
             >
-              {aiAnalysisResult ? <><Zap size={14} /> Regenerate</> : <><Zap size={14} /> Generate AI Insights</>}
+              {aiAnalysisResult ? <><Zap size={14} /> Regenerate</> : <><Zap size={14} /> Generate Semantic Insights</>}
             </button>
           )}
         </div>
@@ -134,7 +134,7 @@ const AIInsightsPanel: React.FC<AIInsightsPanelProps> = ({ insights, computedMet
         {isGenerating && (
           <div className="flex items-center gap-3 py-8 justify-center text-text-muted">
             <Loader2 size={18} className="animate-spin text-[#8b5cf6]" />
-            <span className="text-sm">Analyzing network patterns with AI...</span>
+            <span className="text-sm">Analyzing network patterns automatically...</span>
           </div>
         )}
 

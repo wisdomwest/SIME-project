@@ -17,12 +17,16 @@ export function usePythonBackend(): BackendState {
 
   const probe = useCallback(async (isInitial = false) => {
     if (isInitial) setStatus('loading');
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 4000); // 4 s hard timeout
     try {
-      const h = await getHealth();
+      const h = await getHealth(controller.signal);
+      clearTimeout(timeout);
       setLoadedDatasets(h.loaded_datasets);
       setStatus('up');
       setError(undefined);
     } catch (e) {
+      clearTimeout(timeout);
       const msg = e instanceof Error ? e.message : 'Backend unreachable';
       setStatus((prev) => (prev === 'up' ? prev : 'down'));
       setError(msg);
