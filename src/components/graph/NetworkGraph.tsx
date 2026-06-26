@@ -40,22 +40,16 @@ const NetworkGraph: React.FC<NetworkGraphProps> = ({
 
   // Monitor theme changes to dynamically switch graph text/border colors between light/dark
   const [isDark, setIsDark] = useState(() => 
-    window.matchMedia('(prefers-color-scheme: dark)').matches || 
     document.documentElement.classList.contains('dark')
   );
 
   useEffect(() => {
-    const media = window.matchMedia('(prefers-color-scheme: dark)');
-    const listener = (e: MediaQueryListEvent) => setIsDark(e.matches || document.documentElement.classList.contains('dark'));
-    media.addEventListener('change', listener);
-    
     const observer = new MutationObserver(() => {
-      setIsDark(document.documentElement.classList.contains('dark') || media.matches);
+      setIsDark(document.documentElement.classList.contains('dark'));
     });
     observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
 
     return () => {
-      media.removeEventListener('change', listener);
       observer.disconnect();
     };
   }, []);

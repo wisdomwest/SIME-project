@@ -7,8 +7,8 @@ import { DataTable } from '../components/primitives/DataTable';
 import { Chip } from '../components/primitives/Chip';
 import { PythonOnlyWrap } from '../components/layout/BackendOffline';
 import { SentimentData, getSentiment } from '../services/pythonApi';
-import { useEffect, useState } from 'react';
-import { Loader2, ArrowUpRight } from 'lucide-react';
+import { useEffect, useState, useCallback } from 'react';
+import { Loader2, ArrowUpRight, AlertTriangle } from 'lucide-react';
 
 export function SentimentPage() {
   return (
@@ -21,16 +21,26 @@ export function SentimentPage() {
 function SentimentView() {
   const { route, navigate } = useUrlState();
   const { pythonDatasetId, graphData } = useSocialData();
-  const datasetId = pythonDatasetId ?? (route.name !== 'landing' && route.name !== 'docs' ? route.datasetId : '');
+  const routeDataset = ('datasetId' in route ? (route as { datasetId: string }).datasetId : '') as string;
+  const datasetId = pythonDatasetId ?? routeDataset;
   const [data, setData] = useState<SentimentData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
+  const loadData = useCallback(() => {
     setLoading(true);
+    setError(null);
     getSentiment(datasetId)
       .then((d) => setData(d))
+      .catch((err) => {
+        setError(err instanceof Error ? err.message : 'Failed to fetch sentiment clustering.');
+      })
       .finally(() => setLoading(false));
   }, [datasetId]);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
 
   if (loading) {
     return (
@@ -40,6 +50,27 @@ function SentimentView() {
       </div>
     );
   }
+
+  if (error) {
+    return (
+      <div className="px-8 py-10 max-w-[1280px] mx-auto space-y-6">
+        <div className="border border-signal-neg bg-signal-neg-soft p-6 flex items-start gap-4">
+          <AlertTriangle size={24} className="text-signal-neg shrink-0 mt-0.5" />
+          <div className="space-y-2">
+            <h3 className="text-sm font-semibold text-ink">Failed to load analysis</h3>
+            <p className="text-xs text-ink-soft leading-relaxed">{error}</p>
+            <button
+              onClick={loadData}
+              className="mt-2 text-xs font-medium text-ink border border-rule hover:border-ink px-3 py-1.5 hover:bg-paper-2 transition-colors cursor-pointer"
+            >
+              Retry request
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (!data) return null;
 
   const total = data.clusters.Pos + data.clusters.Neu + data.clusters.Neg;
@@ -132,7 +163,8 @@ function SentimentView() {
             rowKey={(l) => l.node}
             dense
             onRowClick={(l) => {
-              navigate({ name: 'account', datasetId: route.name === 'landing' || route.name === 'docs' ? 'default' : route.datasetId, nodeId: l.node });
+              const dsId = 'datasetId' in route ? route.datasetId : 'default';
+              navigate({ name: 'account', datasetId: dsId, nodeId: l.node });
             }}
             columns={[
               {

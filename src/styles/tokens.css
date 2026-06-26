@@ -51,33 +51,7 @@
   --radius-pill: 999px;
 }
 
-/* ── Dark Mode Overrides ────────────────────────────────────────── */
-@media (prefers-color-scheme: dark) {
-  :root {
-    --paper: #0C0B0A;
-    --paper-2: #141312;
-    --paper-3: #201F1E;
-    --ink: #E6E1D8;
-    --ink-soft: #BAB4A8;
-    --ink-mute: #807B72;
-    --rule: rgba(230, 225, 216, 0.12);
-    --rule-strong: rgba(230, 225, 216, 0.28);
-    --grid: rgba(230, 225, 216, 0.05);
 
-    --ember: #F97316;
-    --ember-soft: rgba(249, 115, 22, 0.12);
-    --ember-strong: #FF8838;
-
-    --signal-pos: #198754;
-    --signal-pos-soft: rgba(25, 135, 84, 0.12);
-    --signal-neg: #EA8686;
-    --signal-neg-soft: rgba(234, 134, 134, 0.12);
-    --signal-neu: #BAB4A8;
-    --signal-neu-soft: rgba(186, 180, 168, 0.12);
-    --signal-warn: #F59E0B;
-    --signal-warn-soft: rgba(245, 158, 11, 0.12);
-  }
-}
 
 :root.dark, body.dark {
   --paper: #0C0B0A;

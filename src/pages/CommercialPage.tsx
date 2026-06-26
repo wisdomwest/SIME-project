@@ -25,7 +25,7 @@ export function CommercialPage() {
 function CommercialView() {
   const { route } = useUrlState();
   const { pythonDatasetId, commercialData, setCommercialData } = useSocialData();
-  const datasetId = pythonDatasetId ?? (route.name !== 'landing' && route.name !== 'docs' ? route.datasetId : '');
+  const datasetId = pythonDatasetId ?? (('datasetId' in route ? (route as { datasetId: string }).datasetId : '') as string);
   const config = getConfig();
   const [showKey, setShowKey] = useState(false);
   const [apiKey, setApiKey] = useState('');

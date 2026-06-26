@@ -2,15 +2,16 @@ import { useUrlState } from '../../app/useUrlState';
 import { useSocialData } from '../../hooks/useSocialData';
 import { Button } from '../primitives/Button';
 import { exportResultsCSV, copyShareUrl } from '../../services/exportService';
-import { Download, Share2, ExternalLink, Sun, Moon } from 'lucide-react';
+import { Download, Share2, ExternalLink } from 'lucide-react';
 import { useState } from 'react';
+import { ThemeToggle } from './ThemeToggle';
 
 export function TopBar({ hasData }: { hasData: boolean }) {
   const { route, navigate } = useUrlState();
   const { graphData, computedMetrics } = useSocialData();
   const [shareCopied, setShareCopied] = useState(false);
 
-  const datasetId = route.name !== 'landing' && route.name !== 'docs' ? route.datasetId : null;
+  const datasetId = 'datasetId' in route ? route.datasetId : null;
   const goToLanding = () => {
     window.location.hash = '#/';
   };
@@ -22,21 +23,6 @@ export function TopBar({ hasData }: { hasData: boolean }) {
     setTimeout(() => setShareCopied(false), 1500);
   };
 
-  const [isDark, setIsDark] = useState(() => 
-    document.documentElement.classList.contains('dark')
-  );
-
-  const toggleTheme = () => {
-    const nextDark = !isDark;
-    setIsDark(nextDark);
-    if (nextDark) {
-      document.documentElement.classList.add('dark');
-      localStorage.setItem('theme', 'dark');
-    } else {
-      document.documentElement.classList.remove('dark');
-      localStorage.setItem('theme', 'light');
-    }
-  };
 
   return (
     <header className="h-16 border-b border-rule bg-paper flex items-center justify-between px-6 shrink-0">
@@ -115,6 +101,7 @@ export function TopBar({ hasData }: { hasData: boolean }) {
           active={false}
           onClick={() => window.location.hash = '#/docs'}
         />
+
         {!hasData && !isLanding && <span className="text-xs text-ink-mute">Loading…</span>}
       </nav>
 
@@ -135,13 +122,7 @@ export function TopBar({ hasData }: { hasData: boolean }) {
             </Button>
           </>
         )}
-        <button
-          onClick={toggleTheme}
-          className="w-8 h-8 flex items-center justify-center border border-rule hover:border-ink text-ink-mute hover:text-ink transition-colors mr-1"
-          aria-label="Toggle dark mode"
-        >
-          {isDark ? <Sun size={14} /> : <Moon size={14} />}
-        </button>
+        <ThemeToggle className="w-8 h-8 flex items-center justify-center border border-rule hover:border-ink text-ink-mute hover:text-ink transition-colors mr-1 cursor-pointer" />
         <a
           href="https://simelab.africa"
           target="_blank"

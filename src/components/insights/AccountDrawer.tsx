@@ -16,7 +16,7 @@ export function AccountDrawer() {
   const { graphData, computedMetrics, aiInsights } = useSocialData();
   const isAccount = route.name === 'account';
   const nodeId = isAccount ? route.nodeId : null;
-  const datasetId = route.name !== 'landing' && route.name !== 'docs' ? route.datasetId : null;
+  const datasetId = 'datasetId' in route ? route.datasetId : null;
 
   const vertex = useMemo<Vertex | null>(() => {
     if (!graphData || !nodeId) return null;

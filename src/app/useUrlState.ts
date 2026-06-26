@@ -103,7 +103,7 @@ function buildHash(route: Route, extras: RouteExtras): string {
   let path = '';
   if (route.name === 'landing') path = '/';
   else if (route.name === 'docs') path = '/docs';
-  else {
+  else if ('datasetId' in route) {
     const d = encodeURIComponent(route.datasetId);
     const p =
       route.name === 'overview' ? '' :

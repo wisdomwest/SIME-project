@@ -16,6 +16,7 @@ export interface SessionState {
   computedMetrics?: unknown;
   aiInsights?: unknown;
   driftData?: unknown;
+  commercialData?: unknown;
   chatMessages?: unknown;
   aiAnalysisResult?: string | null;
   pythonDatasetId?: string | null;

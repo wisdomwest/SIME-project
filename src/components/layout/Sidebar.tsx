@@ -18,7 +18,7 @@ export function Sidebar({ hasData }: { hasData: boolean }) {
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const datasetId = route.name !== 'landing' && route.name !== 'docs' ? route.datasetId : null;
+  const datasetId = 'datasetId' in route ? route.datasetId : null;
   const isLanding = route.name === 'landing';
 
   const platformOptions = useMemo(() => {

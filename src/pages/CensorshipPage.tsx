@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useUrlState } from '../app/useUrlState';
 import { useSocialData } from '../hooks/useSocialData';
 import { CensorshipData, ComparisonData, compareDatasets, getCensorship } from '../services/pythonApi';
@@ -22,10 +22,12 @@ export function CensorshipPage() {
 function CensorshipView() {
   const { route, navigate } = useUrlState();
   const { pythonDatasetId } = useSocialData();
-  const datasetId = pythonDatasetId ?? (route.name !== 'landing' && route.name !== 'docs' ? route.datasetId : '');
+  const routeDataset = ('datasetId' in route ? (route as { datasetId: string }).datasetId : '') as string;
+  const datasetId = pythonDatasetId ?? routeDataset;
   const backend = usePythonBackend();
   const [data, setData] = useState<CensorshipData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   const [t1, setT1] = useState(datasetId);
   const [t2, setT2] = useState('');
@@ -33,10 +35,25 @@ function CensorshipView() {
   const [compLoading, setCompLoading] = useState(false);
   const [compError, setCompError] = useState<string | null>(null);
 
-  useEffect(() => {
+  const loadData = useCallback(() => {
     setLoading(true);
-    getCensorship(datasetId).then(setData).finally(() => setLoading(false));
+    setError(null);
+    getCensorship(datasetId)
+      .then((res) => {
+        setData(res);
+        if (res?.dataset_id) {
+          setT1(res.dataset_id);
+        }
+      })
+      .catch((err) => {
+        setError(err instanceof Error ? err.message : 'Failed to fetch censorship analysis.');
+      })
+      .finally(() => setLoading(false));
   }, [datasetId]);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
 
   useEffect(() => {
     if (backend.loadedDatasets.length > 0 && !t2) {
@@ -70,6 +87,27 @@ function CensorshipView() {
       </div>
     );
   }
+
+  if (error) {
+    return (
+      <div className="px-8 py-10 max-w-[1280px] mx-auto space-y-6">
+        <div className="border border-signal-neg bg-signal-neg-soft p-6 flex items-start gap-4">
+          <AlertTriangle size={24} className="text-signal-neg shrink-0 mt-0.5" />
+          <div className="space-y-2">
+            <h3 className="text-sm font-semibold text-ink">Failed to load analysis</h3>
+            <p className="text-xs text-ink-soft leading-relaxed">{error}</p>
+            <button
+              onClick={loadData}
+              className="mt-2 text-xs font-medium text-ink border border-rule hover:border-ink px-3 py-1.5 hover:bg-paper-2 transition-colors cursor-pointer"
+            >
+              Retry request
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (!data) return null;
 
   const fragmenting = data.structural_holes.filter((h) => h.is_fragmenting).length;

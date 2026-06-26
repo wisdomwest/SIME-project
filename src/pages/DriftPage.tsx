@@ -22,7 +22,8 @@ export function DriftPage() {
 function DriftView() {
   const { route } = useUrlState();
   const { pythonDatasetId, driftData, setDriftData } = useSocialData();
-  const datasetId = pythonDatasetId ?? (route.name !== 'landing' && route.name !== 'docs' ? route.datasetId : '');
+  const routeDataset = ('datasetId' in route ? (route as { datasetId: string }).datasetId : '') as string;
+  const datasetId = pythonDatasetId ?? routeDataset;
   const config = getConfig();
   const [showKey, setShowKey] = useState(false);
   const [apiKey, setApiKey] = useState('');

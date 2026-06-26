@@ -111,6 +111,7 @@ const useSocialDataState = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [processingStage, setProcessingStage] = useState<ProcessingProgress>({ stage: 'idle', progress: 0 });
+  const [isRestoring, setIsRestoring] = useState(true);
 
   const [filters, setFilters] = useState<FilterState>({
     keyword: '',
@@ -131,7 +132,10 @@ const useSocialDataState = () => {
     if (restoredRef.current) return;
     restoredRef.current = true;
     loadSession().then((saved) => {
-      if (!saved || !saved.graphData) return;
+      if (!saved || !saved.graphData) {
+        setIsRestoring(false);
+        return;
+      }
       setGraphData(saved.graphData as GraphData);
       if (saved.computedMetrics) setComputedMetrics(saved.computedMetrics as ComputedMetrics);
       if (saved.aiInsights) setAIInsights(saved.aiInsights as AIInsights);
@@ -140,6 +144,9 @@ const useSocialDataState = () => {
       if (saved.chatMessages) setChatMessages(saved.chatMessages as ChatMessage[]);
       if (saved.aiAnalysisResult !== undefined) setAiAnalysisResult(saved.aiAnalysisResult);
       if (saved.pythonDatasetId) setPythonDatasetId(saved.pythonDatasetId);
+      setIsRestoring(false);
+    }).catch(() => {
+      setIsRestoring(false);
     });
   }, []);
 
@@ -205,6 +212,7 @@ const useSocialDataState = () => {
   // Debounced save — persists latest state to IndexedDB 1s after last change
   const saveTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const scheduleSave = useCallback(() => {
+    if (isRestoring) return;
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(() => {
       saveSession({
@@ -218,7 +226,7 @@ const useSocialDataState = () => {
         pythonDatasetId,
       });
     }, 1000);
-  }, [graphData, computedMetrics, aiInsights, driftData, commercialData, chatMessages, aiAnalysisResult, pythonDatasetId]);
+  }, [isRestoring, graphData, computedMetrics, aiInsights, driftData, commercialData, chatMessages, aiAnalysisResult, pythonDatasetId]);
 
   // Auto-save when state changes
   useEffect(() => { scheduleSave(); }, [scheduleSave]);

@@ -16,6 +16,7 @@ import { AppShell } from './components/layout/AppShell';
 import { useUrlState } from './app/useUrlState';
 import { useSocialData } from './hooks/useSocialData';
 import { getBackendLLMConfig } from './services/pythonApi';
+import { ThemeToggle } from './components/layout/ThemeToggle';
 
 const App: React.FC = () => {
   const { route } = useUrlState();
@@ -30,7 +31,7 @@ const App: React.FC = () => {
           localStorage.setItem('simelab_llm_key', cfg.apiKey);
         }
       })
-      .catch(() => {});
+      .catch(() => { });
 
     // Sync theme
     const saved = localStorage.getItem('theme');
@@ -47,8 +48,11 @@ const App: React.FC = () => {
 
   if (onLanding) {
     return (
-      <div className="h-screen w-full bg-paper text-ink flex flex-col overflow-y-auto">
+      <div className="h-screen w-full bg-paper text-ink flex flex-col overflow-y-auto relative">
         <LoadingOverlay />
+        <div className="absolute top-4 right-4 z-40">
+          <ThemeToggle />
+        </div>
         {route.name === 'docs' ? <DocsPage /> : <LandingPage />}
       </div>
     );

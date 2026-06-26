@@ -17,7 +17,7 @@ export function OverviewPage() {
   const { route, navigate, updateExtras } = useUrlState();
   const { graphData, computedMetrics, aiInsights, filteredData } = useSocialData();
 
-  const datasetId = route.name !== 'landing' && route.name !== 'docs' ? route.datasetId : '';
+  const datasetId = ('datasetId' in route ? (route as { datasetId: string }).datasetId : '') as string;
   const displayV = filteredData?.vertices || graphData?.vertices || [];
   const displayE = filteredData?.edges || graphData?.edges || [];
 

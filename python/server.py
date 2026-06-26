@@ -82,6 +82,7 @@ from simelab.censorship import CensorshipAnalyzer
 from simelab.export import ExportManager
 from simelab.drift import SemanticDriftAnalyzer
 from simelab.commercial import CommercialAnalyzer
+
 from simelab.database import (
     save_full_analysis, get_dataset_meta, list_datasets,
     get_stored_filepath, delete_dataset,
@@ -330,6 +331,15 @@ def _save_analysis_to_sqlite(dataset_id: str, state: dict):
 def _get_analysis(dataset_id: str) -> dict:
     """Get cached analysis or raise 404."""
     if dataset_id not in analyses:
+        # Try to recover it from SQLite filepath
+        from simelab.database import get_stored_filepath
+        fp = get_stored_filepath(dataset_id)
+        if fp and os.path.exists(fp):
+            print(f"Lazy-loading dataset '{dataset_id}' from {fp}...")
+            try:
+                return _run_full_analysis(fp, dataset_id)
+            except Exception as e:
+                raise HTTPException(500, f"Failed to lazy-load dataset '{dataset_id}': {str(e)}")
         raise HTTPException(404, f"Dataset '{dataset_id}' not found. Please upload it first.")
     return analyses[dataset_id]
 
@@ -681,6 +691,9 @@ async def download_file(filename: str, export_dir: str = Query("")):
     if not os.path.exists(filepath):
         raise HTTPException(404, "File not found")
     return FileResponse(filepath, filename=filename)
+
+
+
 
 
 # ─── Main ────────────────────────────────────────────────────────────────────
