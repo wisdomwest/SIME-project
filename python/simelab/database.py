@@ -362,3 +362,66 @@ def save_full_analysis(
     save_disinfo_scores(dataset_id, gs.get("disinfo_scores", []))
     save_hashtags(dataset_id, gs.get("hashtags", []))
     save_structural_holes(dataset_id, gs.get("structural_holes", []))
+
+
+# ─── Load helpers (reconstruct cache from SQLite) ───────────────────────────
+
+def load_vertices(dataset_id: str) -> List[Dict[str, Any]]:
+    """Load all vertices for a dataset from SQLite."""
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            "SELECT * FROM vertices WHERE dataset_id = ?", (dataset_id,)
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def load_edges(dataset_id: str) -> List[Dict[str, Any]]:
+    """Load all edges for a dataset from SQLite."""
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            "SELECT * FROM edges WHERE dataset_id = ?", (dataset_id,)
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def load_disinfo_scores(dataset_id: str) -> List[Dict[str, Any]]:
+    """Load disinformation scores from SQLite."""
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            "SELECT * FROM disinfo_scores WHERE dataset_id = ?", (dataset_id,)
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def load_hashtags(dataset_id: str) -> List[Dict[str, Any]]:
+    """Load hashtags from SQLite."""
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            "SELECT * FROM hashtags WHERE dataset_id = ?", (dataset_id,)
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def load_structural_holes(dataset_id: str) -> List[Dict[str, Any]]:
+    """Load structural holes from SQLite."""
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            "SELECT * FROM structural_holes WHERE dataset_id = ?", (dataset_id,)
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+

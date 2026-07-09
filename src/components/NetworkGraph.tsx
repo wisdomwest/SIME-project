@@ -283,7 +283,7 @@ const NetworkGraph: React.FC<NetworkGraphProps> = ({ vertices, edges, onNodeSele
               'width': 0.3,
               'line-color': '#3b82f6',
               'opacity': 0.25,
-              'curve-style': 'bezier',
+              'curve-style': 'straight',
               'target-arrow-shape': 'triangle',
               'target-arrow-color': '#3b82f6',
               'arrow-scale': 0.45,
@@ -299,6 +299,9 @@ const NetworkGraph: React.FC<NetworkGraphProps> = ({ vertices, edges, onNodeSele
         maxZoom: 5,
         wheelSensitivity: 0.3,
         pixelRatio: 1,
+        hideEdgesOnViewport: true,
+        textureOnViewport: true,
+        motionBlur: true,
       });
 
       cyRef.current = cy;

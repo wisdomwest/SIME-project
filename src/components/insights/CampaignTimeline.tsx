@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import { useSocialData } from '../../hooks/useSocialData';
 import { AIInsights } from '../../engine/aiInsights';
 
@@ -6,14 +7,19 @@ export function CampaignTimeline({ insights }: { insights: AIInsights }) {
   if (!graphData || !computedMetrics) return null;
 
   // Build per-day counts from vertex dates.
-  const counts = new Map<string, number>();
-  graphData.vertices.forEach((v) => {
-    if (!v.date) return;
-    const day = v.date.split('T')[0].split(' ')[0];
-    counts.set(day, (counts.get(day) || 0) + 1);
-  });
-  const series = [...counts.entries()].sort((a, b) => a[0].localeCompare(b[0]));
-  const max = Math.max(...series.map(([, c]) => c), 1);
+  const series = useMemo(() => {
+    const counts = new Map<string, number>();
+    graphData.vertices.forEach((v) => {
+      if (!v.date) return;
+      const day = v.date.split('T')[0].split(' ')[0];
+      counts.set(day, (counts.get(day) || 0) + 1);
+    });
+    return [...counts.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  }, [graphData.vertices]);
+
+  const max = useMemo(() => {
+    return Math.max(...series.map(([, c]) => c), 1);
+  }, [series]);
 
   // Top narratives (3-5)
   const narratives = insights.keyNarratives.slice(0, 5);

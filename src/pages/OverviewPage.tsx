@@ -23,8 +23,7 @@ export function OverviewPage() {
 
   const handleNodeSelect = useCallback((id: string) => {
     updateExtras({ selectedNode: id });
-    navigate({ name: 'account', datasetId, nodeId: id });
-  }, [datasetId, navigate, updateExtras]);
+  }, [updateExtras]);
 
   const m = computedMetrics;
   const i = aiInsights;

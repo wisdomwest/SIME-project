@@ -8,18 +8,15 @@ import { formatDate } from '../app/format';
 import { useCallback } from 'react';
 
 export function NetworkPage() {
-  const { route } = useUrlState();
+  const { updateExtras } = useUrlState();
   const { graphData, filteredData } = useSocialData();
-  const networkDatasetId = 'datasetId' in route ? (route as { datasetId: string }).datasetId : null;
 
   const displayV = filteredData?.vertices || graphData?.vertices || [];
   const displayE = filteredData?.edges || graphData?.edges || [];
 
   const handleNodeSelect = useCallback((id: string) => {
-    if (networkDatasetId) {
-      window.location.hash = `#/d/${networkDatasetId}/account/${encodeURIComponent(id)}`;
-    }
-  }, [networkDatasetId]);
+    updateExtras({ selectedNode: id });
+  }, [updateExtras]);
 
   if (!graphData) return null;
 

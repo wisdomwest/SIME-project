@@ -118,6 +118,42 @@ export interface DriftData {
   total_tweets: number;
 }
 
+/** A single term match within a keyword resolution group */
+export interface CommercialTermHit {
+  term: string;
+  hits: number;
+}
+
+/**
+ * Enriched per-keyword result from the two-phase intelligent search.
+ * Includes offline + LLM entity resolution so the user can see:
+ *   "You searched 'Liberty Shoes' → system resolved to liberty_stores (shoe vendor)"
+ */
+export interface CommercialKeywordResolution {
+  original_query: string;
+  /** The specific account/brand/entity the system thinks the user meant */
+  resolved_entity?: string | null;
+  /** 'account' | 'brand' | 'hashtag' | 'general_topic' */
+  resolved_entity_type?: string | null;
+  /** One-sentence description of what this entity does, from context */
+  intent_summary?: string | null;
+  /** Confidence in the resolution (0.0–1.0) */
+  confidence?: number | null;
+  /** Explanation of how the resolution was reached */
+  reasoning?: string | null;
+  /** Total rows matched by any term in this keyword group */
+  total_hits: number;
+  /** Individual term breakdown with hit counts */
+  terms: CommercialTermHit[];
+  /** Sample of matching tweets/posts for this category */
+  sample_hits?: Array<{
+    text: string;
+    source: string;
+    target: string;
+    date: string;
+  }>;
+}
+
 export interface CommercialData {
   total_tweets: number;
   commercial_tweets: number;
@@ -131,6 +167,15 @@ export interface CommercialData {
     analysis_text: string;
   } | null;
   expanded_keywords: string[];
+  keyword_mappings?: Record<string, CommercialKeywordResolution>;
+  debug_info?: {
+    source_column: string | null;
+    target_column: string | null;
+    date_column: string | null;
+    text_column: string | null;
+    total_rows_loaded: number;
+    active_usernames_count: number;
+  };
 }
 
 // ─── API Functions ──────────────────────────────────────────────────────────
@@ -178,8 +223,8 @@ export async function getSemanticDrift(datasetId: string, apiKey: string): Promi
   return apiFetch(`/drift?dataset_id=${encodeURIComponent(datasetId)}&api_key=${encodeURIComponent(apiKey)}`);
 }
 
-export async function getCommercial(datasetId: string, apiKey: string, baseKeywords: string, useAi: boolean) {
-  return apiFetch('/commercial', {
+export async function getCommercial(datasetId: string, apiKey: string, baseKeywords: string, useAi: boolean): Promise<CommercialData> {
+  return apiFetch<CommercialData>('/commercial', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ dataset_id: datasetId, api_key: apiKey, base_keywords: baseKeywords, use_ai: useAi }),
@@ -206,5 +251,17 @@ export interface BackendLLMConfig {
 export async function getBackendLLMConfig(): Promise<BackendLLMConfig> {
   return apiFetch('/llm-config');
 }
+
+export interface BackendAnalysisData {
+  vertices: any[];
+  edges: any[];
+  metrics: any;
+  ai_insights: any;
+}
+
+export async function getAnalysisData(datasetId = 'default'): Promise<BackendAnalysisData> {
+  return apiFetch(`/analysis-data?dataset_id=${encodeURIComponent(datasetId)}`);
+}
+
 
 

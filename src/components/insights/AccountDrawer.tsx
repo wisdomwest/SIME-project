@@ -12,10 +12,11 @@ import { ArrowUpRight } from 'lucide-react';
 import { Vertex } from '../../engine/csvParserEnhanced';
 
 export function AccountDrawer() {
-  const { route, navigate } = useUrlState();
+  const { route, extras, navigate, updateExtras } = useUrlState();
   const { graphData, computedMetrics, aiInsights } = useSocialData();
-  const isAccount = route.name === 'account';
-  const nodeId = isAccount ? route.nodeId : null;
+  const isAccountRoute = route.name === 'account';
+  const nodeId = isAccountRoute ? route.nodeId : (extras.selectedNode || null);
+  const isOpen = isAccountRoute || !!extras.selectedNode;
   const datasetId = 'datasetId' in route ? route.datasetId : null;
 
   const vertex = useMemo<Vertex | null>(() => {
@@ -26,12 +27,14 @@ export function AccountDrawer() {
   function close() {
     if (route.name === 'account') {
       navigate({ name: 'overview', datasetId: route.datasetId });
+    } else {
+      updateExtras({ selectedNode: undefined });
     }
   }
 
   if (!vertex) {
     return (
-      <Drawer open={isAccount} onClose={close} title="Account">
+      <Drawer open={isOpen} onClose={close} title="Account">
         <p className="text-sm text-ink-soft">
           No account matching <span className="font-mono text-ember">{nodeId}</span> in the loaded dataset.
         </p>
@@ -40,7 +43,7 @@ export function AccountDrawer() {
   }
 
   return (
-    <Drawer open={isAccount} onClose={close} title="Account deep-dive">
+    <Drawer open={isOpen} onClose={close} title="Account deep-dive">
       <AccountBody vertex={vertex} datasetId={(datasetId ?? '')} navigate={navigate} computedMetrics={computedMetrics} aiInsights={aiInsights} />
     </Drawer>
   );
@@ -114,6 +117,8 @@ function AccountBody({ vertex, datasetId, navigate, computedMetrics, aiInsights 
   // Build per-day series for sparkline of degree over time? (Skip — use simpler)
   void computedMetrics;
 
+  const { route, updateExtras } = useUrlState();
+
   return (
     <div className="space-y-7">
       {/* Identity */}
@@ -146,11 +151,13 @@ function AccountBody({ vertex, datasetId, navigate, computedMetrics, aiInsights 
 
       {/* Tweet */}
       {vertex.tweetText && (
-        <Panel padded>
-          <Eyebrow>Sample post</Eyebrow>
-          <p className="font-body text-sm text-ink leading-relaxed mt-2 italic border-l-2 border-ember pl-3">
-            "{vertex.tweetText}"
-          </p>
+        <Panel padded={false}>
+          <div className="p-5">
+            <Eyebrow>Sample post</Eyebrow>
+            <p className="font-body text-sm text-ink leading-relaxed mt-2 italic border-l-2 border-ember pl-3">
+              "{vertex.tweetText}"
+            </p>
+          </div>
         </Panel>
       )}
 
@@ -259,7 +266,13 @@ function AccountBody({ vertex, datasetId, navigate, computedMetrics, aiInsights 
             {related.map((r) => (
               <li key={r.id}>
                 <button
-                  onClick={() => navigate({ name: 'account', datasetId, nodeId: r.id })}
+                  onClick={() => {
+                    if (route.name === 'account') {
+                      navigate({ name: 'account', datasetId, nodeId: r.id });
+                    } else {
+                      updateExtras({ selectedNode: r.id });
+                    }
+                  }}
                   className="w-full flex items-center gap-3 text-left py-1 hover:text-ember transition-colors"
                 >
                   <span className="text-sm text-ink">@{r.id}</span>

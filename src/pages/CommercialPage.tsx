@@ -8,7 +8,7 @@ import { Panel } from '../components/primitives/Panel';
 import { StatBlock, StatGrid } from '../components/primitives/StatBlock';
 import { Button } from '../components/primitives/Button';
 import { PythonOnlyWrap } from '../components/layout/BackendOffline';
-import { Loader2, Store, AlertTriangle, Key } from 'lucide-react';
+import { Loader2, Store, AlertTriangle, Key, Search, CheckCircle2, HelpCircle } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
   LineChart, Line, CartesianGrid, PieChart, Pie, Cell, Legend
@@ -33,6 +33,7 @@ function CommercialView() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [baseKeywords, setBaseKeywords] = useState('Furniture, Computers and their accessories, Shoes, Betting and gambling, Vehicles and their accessories, Clothing, Airtime');
+  const [expandedCategories, setExpandedCategories] = useState<Record<string, boolean>>({});
 
   // We can run this even without an LLM key if we just want regex matches.
   // The backend supports empty key. But we'll encourage a key.
@@ -48,7 +49,7 @@ function CommercialView() {
         return;
       }
     }
-    
+
     setLoading(true);
     setError(null);
     try {
@@ -109,7 +110,7 @@ function CommercialView() {
               />
             </div>
             <div className="flex flex-col gap-2">
-              <Button onClick={() => run(false)} variant="secondary" size="lg">Run Exact Match</Button>
+              <Button onClick={() => run(false)} variant="ghost" size="lg">Run Exact Match</Button>
               <Button onClick={() => run(true)} size="lg">Run with Automated Expansion</Button>
             </div>
           </div>
@@ -126,9 +127,8 @@ function CommercialView() {
               <button
                 key={p}
                 onClick={() => setProvider(p)}
-                className={`px-3 py-2 text-sm font-medium border ${
-                  provider === p ? 'border-ember text-ember bg-ember-soft' : 'border-rule text-ink-soft hover:border-ink'
-                }`}
+                className={`px-3 py-2 text-sm font-medium border ${provider === p ? 'border-ember text-ember bg-ember-soft' : 'border-rule text-ink-soft hover:border-ink'
+                  }`}
               >
                 {p === 'tokenrouter' ? 'TokenRouter' : p === 'nvidia-nim' ? 'NVIDIA NIM' : 'DeepSeek'}
               </button>
@@ -165,6 +165,17 @@ function CommercialView() {
 
       {data && (
         <>
+          {data.debug_info && (
+            <div className="bg-paper-2 border border-rule px-4 py-3 flex flex-wrap gap-x-6 gap-y-2 text-xs text-ink-soft">
+              <span className="font-semibold text-ink-mute uppercase tracking-wider text-[10px] self-center">Diagnostics</span>
+              <span>Loaded: <strong className="text-ink">{data.debug_info.total_rows_loaded.toLocaleString()}</strong> rows</span>
+              <span>Text Column: <code className="text-ember font-mono">{data.debug_info.text_column || 'none'}</code></span>
+              <span>Source Handle Column: <code className="text-ember font-mono">{data.debug_info.source_column || 'none'}</code></span>
+              <span>Target Handle Column: <code className="text-ember font-mono">{data.debug_info.target_column || 'none'}</code></span>
+              <span>Active Entities: <strong className="text-ink">{data.debug_info.active_usernames_count}</strong></span>
+            </div>
+          )}
+
           <Panel padded={false}>
             <div className="p-6">
               <StatGrid>
@@ -172,13 +183,13 @@ function CommercialView() {
                   label="Commercial Volume"
                   value={data.commercial_tweets.toLocaleString()}
                   caption={`Out of ${data.total_tweets.toLocaleString()} tweets`}
-                  emphasis={data.percentage_commercial > 5 ? 'neg' : 'none'}
+                  emphasis={data.percentage_commercial > 5 ? 'neg' : undefined}
                 />
                 <StatBlock
                   label="Commercial %"
                   value={`${data.percentage_commercial.toFixed(2)}%`}
                   caption="Tweets containing sales keywords"
-                  emphasis={data.percentage_commercial > 5 ? 'neg' : 'none'}
+                  emphasis={data.percentage_commercial > 5 ? 'neg' : undefined}
                 />
                 <StatBlock
                   label="Unique Categories"
@@ -194,17 +205,139 @@ function CommercialView() {
                   />
                 )}
               </StatGrid>
-              {data.expanded_keywords && data.expanded_keywords.length > 0 && (
+              {!!data.keyword_mappings && Object.keys(data.keyword_mappings).length > 0 ? (
                 <div className="mt-6 pt-6 border-t border-rule">
-                  <h4 className="text-sm font-medium text-ink mb-2">Expanded Keywords Used</h4>
-                  <div className="flex flex-wrap gap-2">
-                    {data.expanded_keywords.map((kw, i) => (
-                      <span key={i} className="px-2 py-1 bg-paper border border-rule text-xs text-ink-soft rounded-full">
-                        {kw}
-                      </span>
-                    ))}
+                  <h4 className="text-sm font-medium text-ink mb-3 font-serif" style={{ fontFamily: "'Times New Roman', Times, serif" }}>
+                    Intelligent Search Resolution
+                  </h4>
+                  <div className="space-y-4">
+                    {Object.entries(data.keyword_mappings).map(([category, mapping]) => {
+                      const terms = mapping.terms || [];
+                      const totalHits = mapping.total_hits ?? terms.reduce((s, t) => s + t.hits, 0);
+                      const hasResolution = !!mapping.resolved_entity && totalHits > 0;
+                      const resolvedName = mapping.resolved_entity ?? '';
+                      return (
+                        <div key={category} className="border border-rule p-4 bg-paper-2/40 space-y-3">
+
+                          {/* ── Header: original query + hit count ── */}
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <Search size={13} className="text-ink-mute shrink-0" />
+                              <span className="font-medium text-sm text-ink font-serif" style={{ fontFamily: "'Times New Roman', Times, serif" }}>
+                                &ldquo;{category}&rdquo;
+                              </span>
+                            </div>
+                            <span className={`text-xs px-2 py-0.5 font-mono border ${
+                              totalHits > 0 ? 'bg-ember-soft border-ember text-ember' : 'bg-paper border-rule text-ink-mute'
+                            }`}>
+                              {totalHits.toLocaleString()} hits
+                            </span>
+                          </div>
+
+                          {/* ── Resolution banner ── */}
+                          {hasResolution ? (
+                            <div className="pl-3 border-l-2 border-ember space-y-2">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <CheckCircle2 size={13} className="text-ember shrink-0" />
+                                <span className="text-xs text-ink-soft">Resolved to:</span>
+                                <span className="font-mono text-xs font-bold text-white bg-ember border border-ember px-2 py-0.5">
+                                  {resolvedName}
+                                </span>
+                                {mapping.resolved_entity_type && (
+                                  <span className="text-xs border border-rule px-2 py-0.5 text-ink-mute">
+                                    {mapping.resolved_entity_type}
+                                  </span>
+                                )}
+                                {mapping.confidence != null && (
+                                  <span className={`text-xs px-2 py-0.5 border ${
+                                    mapping.confidence >= 0.7
+                                      ? 'border-pos text-pos bg-pos-soft'
+                                      : 'border-warn text-warn bg-warn-soft'
+                                  }`}>
+                                    {Math.round(mapping.confidence * 100)}% confident
+                                  </span>
+                                )}
+                              </div>
+                              {!!mapping.intent_summary && (
+                                <p className="text-xs text-ink-soft italic leading-relaxed">
+                                  {mapping.intent_summary}
+                                </p>
+                              )}
+                              {!!mapping.reasoning && (
+                                <p className="text-xs text-ink-mute leading-relaxed">
+                                  {mapping.reasoning}
+                                </p>
+                              )}
+                            </div>
+                          ) : totalHits === 0 ? (
+                            <div className="pl-3 border-l-2 border-rule flex items-center gap-2">
+                              <HelpCircle size={12} className="text-ink-mute shrink-0" />
+                              <p className="text-xs text-ink-mute italic">No matches found in the dataset for this query.</p>
+                            </div>
+                          ) : null}
+
+                          {/* ── Individual term chips ── */}
+                          <div className="flex flex-wrap gap-2">
+                            {terms.map((item, idx) => (
+                              <span
+                                key={idx}
+                                className={`px-2 py-1 text-xs border transition-all ${
+                                  item.term === resolvedName
+                                    ? 'bg-ember text-white border-ember font-bold'
+                                    : item.hits > 0
+                                      ? 'bg-ember-soft border-ember text-ember font-medium'
+                                      : 'bg-paper/40 border-rule text-ink-mute'
+                                }`}
+                              >
+                                {item.term}
+                                <span className="ml-1 opacity-80 font-mono">({item.hits})</span>
+                              </span>
+                            ))}
+                          </div>
+
+                          {/* ── Expandable Matched Tweets List ── */}
+                          {mapping.sample_hits && mapping.sample_hits.length > 0 && (
+                            <div className="pt-2 border-t border-rule/30">
+                              <button
+                                onClick={() => setExpandedCategories(prev => ({ ...prev, [category]: !prev[category] }))}
+                                className="text-xs font-semibold text-ember hover:underline flex items-center gap-1 cursor-pointer"
+                              >
+                                {expandedCategories[category] ? 'Hide' : 'Show'} Matched Tweets ({mapping.sample_hits.length})
+                              </button>
+                              
+                              {expandedCategories[category] && (
+                                <div className="mt-3 space-y-2 max-h-60 overflow-y-auto pr-2 border-l border-rule pl-3">
+                                  {mapping.sample_hits.map((hit: any, i: number) => (
+                                    <div key={i} className="text-xs bg-paper/30 p-2 border border-rule/30 rounded">
+                                      <div className="flex justify-between items-center text-ink-mute mb-1 font-mono text-[10px]">
+                                        <span>From: {hit.source || 'unknown'} {hit.target ? `→ To: ${hit.target}` : ''}</span>
+                                        <span>{hit.date}</span>
+                                      </div>
+                                      <p className="text-ink leading-relaxed font-body">{hit.text}</p>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
+              ) : (
+                !!data.expanded_keywords && data.expanded_keywords.length > 0 ? (
+                  <div className="mt-6 pt-6 border-t border-rule">
+                    <h4 className="text-sm font-medium text-ink mb-2">Expanded Keywords Used</h4>
+                    <div className="flex flex-wrap gap-2">
+                      {data.expanded_keywords.map((kw, i) => (
+                        <span key={i} className="px-2 py-1 bg-paper border border-rule text-xs text-ink-soft rounded-full">
+                          {kw}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                ) : null
               )}
             </div>
           </Panel>
@@ -249,20 +382,20 @@ function CommercialView() {
           </div>
 
           <Panel eyebrow={<Eyebrow accent>Timeline</Eyebrow>} title="Commercial Co-optation Trend">
-             <div className="h-64 w-full mt-4">
-                <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={data.trend} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7eb" />
-                    <XAxis dataKey="date" tick={{ fontSize: 12 }} stroke="#9ca3af" />
-                    <YAxis yAxisId="left" tick={{ fontSize: 12 }} stroke="#9ca3af" />
-                    <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 12 }} stroke="#ef4444" />
-                    <Tooltip />
-                    <Legend />
-                    <Line yAxisId="left" type="monotone" dataKey="total" stroke="#9ca3af" dot={false} name="Total Tweets" />
-                    <Line yAxisId="right" type="monotone" dataKey="commercial" stroke="#ef4444" dot={false} name="Commercial Tweets" strokeWidth={2} />
-                  </LineChart>
-                </ResponsiveContainer>
-              </div>
+            <div className="h-64 w-full mt-4">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={data.trend} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7eb" />
+                  <XAxis dataKey="date" tick={{ fontSize: 12 }} stroke="#9ca3af" />
+                  <YAxis yAxisId="left" tick={{ fontSize: 12 }} stroke="#9ca3af" />
+                  <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 12 }} stroke="#ef4444" />
+                  <Tooltip />
+                  <Legend />
+                  <Line yAxisId="left" type="monotone" dataKey="total" stroke="#9ca3af" dot={false} name="Total Tweets" />
+                  <Line yAxisId="right" type="monotone" dataKey="commercial" stroke="#ef4444" dot={false} name="Commercial Tweets" strokeWidth={2} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
           </Panel>
 
           {data.ai_analysis && (

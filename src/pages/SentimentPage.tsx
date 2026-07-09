@@ -19,7 +19,7 @@ export function SentimentPage() {
 }
 
 function SentimentView() {
-  const { route, navigate } = useUrlState();
+  const { route, updateExtras } = useUrlState();
   const { pythonDatasetId, graphData } = useSocialData();
   const routeDataset = ('datasetId' in route ? (route as { datasetId: string }).datasetId : '') as string;
   const datasetId = pythonDatasetId ?? routeDataset;
@@ -163,8 +163,7 @@ function SentimentView() {
             rowKey={(l) => l.node}
             dense
             onRowClick={(l) => {
-              const dsId = 'datasetId' in route ? route.datasetId : 'default';
-              navigate({ name: 'account', datasetId: dsId, nodeId: l.node });
+              updateExtras({ selectedNode: l.node });
             }}
             columns={[
               {

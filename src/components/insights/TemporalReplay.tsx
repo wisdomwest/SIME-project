@@ -57,6 +57,31 @@ export function TemporalReplay() {
     });
   }, [graphData, days, metric]);
 
+  // Precompute visible node count for each day to avoid filtering all vertices on every render/tick
+  const visibleCounts = useMemo(() => {
+    if (!graphData || days.length === 0) return [] as number[];
+    const dayIndices = new Map<string, number>();
+    days.forEach((day, idx) => dayIndices.set(day, idx));
+
+    const counts = new Array(days.length).fill(0);
+    graphData.vertices.forEach((v) => {
+      const parsed = parseDate(v.date);
+      if (!parsed) return;
+      const d = formatDateISO(parsed);
+      const idx = dayIndices.get(d);
+      if (idx !== undefined) {
+        counts[idx]++;
+      }
+    });
+
+    let sum = 0;
+    for (let i = 0; i < counts.length; i++) {
+      sum += counts[i];
+      counts[i] = sum;
+    }
+    return counts;
+  }, [graphData, days]);
+
   // On first load, start at the beginning and show all nodes (no date cap)
   useEffect(() => {
     if (days.length) {
@@ -115,13 +140,7 @@ export function TemporalReplay() {
 
   const max = Math.max(...series.map((s) => Math.abs(s.value)), 1);
   const currentDay = replayIdx !== null ? days[replayIdx] : '';
-  // How many vertices are visible up to current day
-  const visibleCount = graphData
-    ? graphData.vertices.filter((v) => {
-        const d = parseDate(v.date);
-        return d && formatDateISO(d) <= currentDay;
-      }).length
-    : 0;
+  const visibleCount = replayIdx !== null && visibleCounts[replayIdx] !== undefined ? visibleCounts[replayIdx] : 0;
 
   return (
     <div className="space-y-4">

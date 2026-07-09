@@ -20,7 +20,7 @@ export function CensorshipPage() {
 }
 
 function CensorshipView() {
-  const { route, navigate } = useUrlState();
+  const { route, updateExtras } = useUrlState();
   const { pythonDatasetId } = useSocialData();
   const routeDataset = ('datasetId' in route ? (route as { datasetId: string }).datasetId : '') as string;
   const datasetId = pythonDatasetId ?? routeDataset;
@@ -182,7 +182,7 @@ function CensorshipView() {
         <DataTable
           rowKey={(h) => h.node}
           dense
-          onRowClick={(h) => navigate({ name: 'account', datasetId, nodeId: h.node })}
+          onRowClick={(h) => updateExtras({ selectedNode: h.node })}
           columns={[
             { key: 'node', header: 'Account', render: (h) => <span className="text-ink">@{h.node}</span>, sortValue: (h) => h.si_score },
             {
@@ -244,7 +244,7 @@ function CensorshipView() {
                   <DataTable
                     rowKey={(n) => n.node}
                     dense
-                    onRowClick={(n) => navigate({ name: 'account', datasetId: t1, nodeId: n.node })}
+                    onRowClick={(n) => updateExtras({ selectedNode: n.node })}
                     columns={[
                       { key: 'node', header: 'Account', render: (n) => <span className="text-signal-neg">@{n.node}</span>, sortValue: (n) => n.si_score },
                       { key: 'si', header: 'SI', align: 'right', render: (n) => <span className="font-mono text-ink">{n.si_score.toFixed(5)}</span>, sortValue: (n) => n.si_score },

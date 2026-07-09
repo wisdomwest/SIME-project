@@ -1,10 +1,8 @@
 import { useState, useCallback, useMemo, createContext, useContext, ReactNode, createElement, useEffect, useRef } from 'react';
-import Graph from 'graphology';
-import { Edge, Vertex, GraphData, parseNodeXLFile } from '../engine/csvParserEnhanced';
-import { ComputedMetrics, computeSNAMetrics } from '../engine/graphMetrics';
-import { detectCommunities } from '../engine/communityDetection';
-import { AIInsights, analyzeAI } from '../engine/aiInsights';
-import { uploadFile, getSentiment, getDisinformation } from '../services/pythonApi';
+import { GraphData } from '../engine/csvParserEnhanced';
+import { ComputedMetrics } from '../engine/graphMetrics';
+import { AIInsights } from '../engine/aiInsights';
+import { uploadFile, getSentiment, getDisinformation, getAnalysisData } from '../services/pythonApi';
 import { loadSession, saveSession, clearSession } from '../services/db';
 
 export interface ChatMessage {
@@ -13,66 +11,40 @@ export interface ChatMessage {
   timestamp: number;
 }
 
-/** Compute only the topology-level stats (components, reciprocity, density)
- *  from raw vertex/edge arrays without re-running full centrality. */
-function computeGraphTopology(vertices: Vertex[], edges: Edge[]): {
-  connectedComponents: number;
-  reciprocity: number;
-  density: number;
-  n: number;
-  size: number;
-} {
-  const g = new Graph({ type: 'directed', multi: false, allowSelfLoops: false });
-  
-  // Find all nodes that participate in at least one edge
-  const activeNodes = new Set<string>();
-  for (const e of edges) {
-    activeNodes.add(e.source);
-    activeNodes.add(e.target);
-  }
-
-  // Only merge nodes that are active (participate in edges)
-  for (const v of vertices) {
-    if (activeNodes.has(v.id)) {
-      g.mergeNode(v.id);
+function internGraphData(data: GraphData): GraphData {
+  if (!data) return data;
+  const stringPool = new Map<string, string>();
+  const intern = (str: string | undefined | null): string => {
+    if (!str) return '';
+    let cached = stringPool.get(str);
+    if (!cached) {
+      stringPool.set(str, str);
+      cached = str;
     }
-  }
+    return cached;
+  };
 
-  for (const e of edges) {
-    if (g.hasNode(e.source) && g.hasNode(e.target) && !g.hasEdge(e.source, e.target)) {
-      try { g.addEdge(e.source, e.target); } catch (_) {}
-    }
-  }
-
-  // Weakly-connected components via BFS ignoring edge direction
-  const visited = new Set<string>();
-  let components = 0;
-  g.forEachNode((node) => {
-    if (!visited.has(node)) {
-      components++;
-      const stack = [node];
-      while (stack.length) {
-        const cur = stack.pop()!;
-        if (visited.has(cur)) continue;
-        visited.add(cur);
-        // forEachNeighbor visits both in- and out-neighbours
-        g.forEachNeighbor(cur, (n) => { if (!visited.has(n)) stack.push(n); });
-      }
+  data.vertices.forEach((v) => {
+    v.id = intern(v.id);
+    v.label = intern(v.label);
+    v.sentiment = intern(v.sentiment) as 'Pos' | 'Neu' | 'Neg';
+    v.platform = intern(v.platform);
+    v.topic = intern(v.topic);
+    v.clusterLabel = intern(v.clusterLabel);
+    v.date = intern(v.date);
+    if (v.hashtags) {
+      v.hashtags = v.hashtags.map(intern);
     }
   });
 
-  // Reciprocity = fraction of edges that have a reverse edge
-  let reciprocal = 0;
-  g.forEachEdge((_e, _a, src, tgt) => {
-    if (g.hasEdge(tgt, src)) reciprocal++;
+  data.edges.forEach((e) => {
+    e.source = intern(e.source);
+    e.target = intern(e.target);
+    e.date = intern(e.date);
+    e.relation = intern(e.relation);
   });
-  const size = g.size;
-  const n = g.order;
-  const reciprocity = size > 0 ? reciprocal / size : 0;
-  // Directed density: edges / (n*(n-1))
-  const density = n > 1 ? size / (n * (n - 1)) : 0;
 
-  return { connectedComponents: components, reciprocity, density, n, size };
+  return data;
 }
 
 export type { AIInsights } from '../engine/aiInsights';
@@ -93,11 +65,6 @@ export interface FilterState {
 
 export type ProcessingStage = 'idle' | 'parsing' | 'metrics' | 'communities' | 'graph' | 'ai' | 'done';
 export type ProcessingProgress = { stage: ProcessingStage; progress: number };
-
-// Yield to the browser to keep UI responsive
-function yieldToBrowser(): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, 0));
-}
 
 const useSocialDataState = () => {
   const [graphData, setGraphData] = useState<GraphData | null>(null);
@@ -136,7 +103,8 @@ const useSocialDataState = () => {
         setIsRestoring(false);
         return;
       }
-      setGraphData(saved.graphData as GraphData);
+      const interned = internGraphData(saved.graphData as GraphData);
+      setGraphData(interned);
       if (saved.computedMetrics) setComputedMetrics(saved.computedMetrics as ComputedMetrics);
       if (saved.aiInsights) setAIInsights(saved.aiInsights as AIInsights);
       if (saved.driftData) setDriftData(saved.driftData as import('../services/pythonApi').DriftData);
@@ -239,101 +207,37 @@ const useSocialDataState = () => {
     setChatMessages([]);
     setAiAnalysisResult(null);
     clearSession();
-    setProcessingStage({ stage: 'parsing', progress: 5 });
+    setProcessingStage({ stage: 'parsing', progress: 10 });
 
     try {
-      // Stage 1: Parse file
-      const parsed = await parseNodeXLFile(file);
-      await yieldToBrowser();
-      setProcessingStage({ stage: 'metrics', progress: 25 });
+      // 1. Upload file to Python backend and let it run full analysis (FeatureEngineer, Sentiment, Disinfo, Censorship, Hashtags)
+      const summary = await uploadFile(file);
+      setProcessingStage({ stage: 'metrics', progress: 50 });
 
-      // Stage 2: Compute SNA metrics (heaviest — yield periodically)
-      const metrics = await computeMetricsAsync(parsed, (pct) => {
-        setProcessingStage({ stage: 'metrics', progress: 25 + Math.round(pct * 0.35) });
+      if (!summary || !summary.dataset_id) {
+        throw new Error("Failed to upload and analyze file on backend.");
+      }
+
+      setPythonDatasetId(summary.dataset_id);
+
+      // 2. Fetch the computed metrics, full graph, and AI insights from backend in a single request!
+      setProcessingStage({ stage: 'ai', progress: 80 });
+      const data = await getAnalysisData(summary.dataset_id);
+
+      const parsed: GraphData = internGraphData({
+        vertices: data.vertices,
+        edges: data.edges,
+        metrics: data.metrics,
+        hasPrecomputedMetrics: true
       });
-      await yieldToBrowser();
-      setProcessingStage({ stage: 'communities', progress: 60 });
-
-      // Stage 3: Community detection
-      await detectCommunitiesAsync(parsed);
-      await yieldToBrowser();
-      setProcessingStage({ stage: 'ai', progress: 75 });
-
-      // Stage 4: AI analysis
-      const ai = await analyzeAIAsync(parsed);
-      await yieldToBrowser();
-      setProcessingStage({ stage: 'graph', progress: 92 });
 
       setGraphData(parsed);
-      setComputedMetrics(metrics);
-      setAIInsights(ai);
+      setComputedMetrics(data.metrics);
+      setAIInsights(data.ai_insights);
 
       setProcessingStage({ stage: 'done', progress: 100 });
       await new Promise(r => setTimeout(r, 600)); // Brief pause so user sees "done"
 
-      // Stage 5 (best-effort): hand the same file to the Python backend so
-      // the 5 deep-analysis pages light up. Failure is non-fatal — the
-      // in-browser pipeline is already complete.
-      uploadFile(file)
-        .then(async (summary) => {
-          if (summary?.dataset_id) {
-            setPythonDatasetId(summary.dataset_id);
-
-            // Fetch actual calculated sentiment and disinformation labels from the backend
-            try {
-              const [sentiment, disinfo] = await Promise.all([
-                getSentiment(summary.dataset_id),
-                getDisinformation(summary.dataset_id),
-              ]);
-
-              const sentimentMap = new Map<string, 'Pos' | 'Neu' | 'Neg'>();
-              sentiment.labels.forEach((l) => {
-                sentimentMap.set(l.node, l.sentiment as 'Pos' | 'Neu' | 'Neg');
-              });
-
-              const disinfoMap = new Map<string, { score: number; isBot: boolean }>();
-              disinfo.scores.forEach((s) => {
-                disinfoMap.set(s.node, {
-                  score: s.disinfo_score,
-                  isBot: s.risk_level === 'likely_disinfo' || s.risk_level === 'suspicious',
-                });
-              });
-
-              setGraphData((prev) => {
-                if (!prev) return null;
-                const updatedVertices = prev.vertices.map((v) => {
-                  const pySent = sentimentMap.get(v.id);
-                  const pyDis = disinfoMap.get(v.id);
-                  return {
-                    ...v,
-                    sentiment: pySent !== undefined ? pySent : v.sentiment,
-                    botScore: pyDis !== undefined ? pyDis.score : v.botScore,
-                    isBot: pyDis !== undefined ? pyDis.isBot : v.isBot,
-                  };
-                });
-                return { ...prev, vertices: updatedVertices };
-              });
-
-              // Synchronize the computed SNA metrics sentiment distribution with the Python backend k-means counts
-              setComputedMetrics((prevMetrics) => {
-                if (!prevMetrics) return null;
-                return {
-                  ...prevMetrics,
-                  sentimentDistribution: {
-                    Pos: sentiment.clusters.Pos,
-                    Neu: sentiment.clusters.Neu,
-                    Neg: sentiment.clusters.Neg,
-                  },
-                };
-              });
-            } catch (err) {
-              console.warn("Failed to synchronize calculations with Python backend:", err);
-            }
-          }
-        })
-        .catch((err) => {
-          console.warn("Python backend upload failed:", err);
-        });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Failed to process file.';
       setError(msg);
@@ -454,71 +358,4 @@ export const useSocialData = () => {
   return context;
 };
 
-// === ASYNC WRAPPERS WITH YIELD ===
-
-async function computeMetricsAsync(data: GraphData, onProgress: (pct: number) => void): Promise<ComputedMetrics> {
-  // Break into chunks to keep UI responsive
-  onProgress(0.05);
-  await yieldToBrowser();
-
-  if (data.hasPrecomputedMetrics) {
-    // NodeXL precomputed vertex-level centrality values are already in the
-    // vertex objects. We still need to compute graph-level topology stats
-    // (components, reciprocity, density) because NodeXL doesn't export them.
-    const topo = computeGraphTopology(data.vertices, data.edges);
-
-    const sortedByDegree = [...data.vertices].sort((a, b) => b.degree - a.degree);
-    const sortedByBetweenness = [...data.vertices].sort((a, b) => b.betweenness - a.betweenness);
-
-    const computed: ComputedMetrics = {
-      ...data.metrics,
-      topInfluencers: sortedByDegree.slice(0, 10),
-      topBetweenness: sortedByBetweenness.slice(0, 10),
-      diameter: data.metrics.diameter || 0,
-      avgClusteringCoefficient: data.metrics.avgClusteringCoefficient || 0,
-      // Override the hardcoded parser values with real computed values
-      connectedComponents: topo.connectedComponents,
-      reciprocity: topo.reciprocity,
-      density: topo.density,
-      totalVertices: topo.n,
-      totalEdges: topo.size,
-    };
-    onProgress(1.0);
-    return computed;
-  }
-
-  // Do the actual work in chunks
-  const result = await new Promise<ComputedMetrics>((resolve) => {
-    setTimeout(() => {
-      const r = computeSNAMetrics(data.vertices, data.edges);
-      resolve(r);
-    }, 20);
-  });
-
-  onProgress(0.9);
-  await yieldToBrowser();
-  onProgress(1.0);
-  return result;
-}
-
-async function detectCommunitiesAsync(data: GraphData): Promise<void> {
-  if (data.hasPrecomputedMetrics) {
-    // Already parsed and assigned from Group Vertices in the parser
-    return;
-  }
-  await new Promise<void>((resolve) => {
-    setTimeout(() => {
-      detectCommunities(data.vertices, data.edges);
-      resolve();
-    }, 20);
-  });
-}
-
-async function analyzeAIAsync(data: GraphData): Promise<AIInsights> {
-  return new Promise<AIInsights>((resolve) => {
-    setTimeout(() => {
-      const r = analyzeAI(data.vertices, data.edges);
-      resolve(r);
-    }, 20);
-  });
-}
+// Unused async calculations removed; all processing delegated to Python backend.

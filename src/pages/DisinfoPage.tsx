@@ -19,7 +19,7 @@ export function DisinfoPage() {
 }
 
 function DisinfoView() {
-  const { route, navigate } = useUrlState();
+  const { route, updateExtras } = useUrlState();
   const { pythonDatasetId } = useSocialData();
   const routeDataset = ('datasetId' in route ? (route as { datasetId: string }).datasetId : '') as string;
   const datasetId = pythonDatasetId ?? routeDataset;
@@ -126,7 +126,7 @@ function DisinfoView() {
         <DataTable
           rowKey={(r) => r.node}
           dense
-          onRowClick={(r) => navigate({ name: 'account', datasetId, nodeId: r.node })}
+          onRowClick={(r) => updateExtras({ selectedNode: r.node })}
           columns={disinfoColumns()}
           rows={data.scores.slice(0, 30)}
         />

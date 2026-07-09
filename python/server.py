@@ -209,6 +209,11 @@ def _run_full_analysis(filepath: str, dataset_id: str) -> dict:
     ha.detect_lifecycle()
     ha.score_hashtags()
 
+    # Store Fiedler value and CVI in overall_metrics for direct database loading later
+    meta.setdefault("overall_metrics", {})
+    meta["overall_metrics"]["fiedler_value"] = ca._compute_fiedler()
+    meta["overall_metrics"]["cvi"] = ca.cvi
+
     state = {
         "G": G,
         "meta": meta,
@@ -225,6 +230,307 @@ def _run_full_analysis(filepath: str, dataset_id: str) -> dict:
     _save_analysis_to_sqlite(dataset_id, state)
 
     return state
+
+
+def _load_analysis_from_db(dataset_id: str) -> Optional[dict]:
+    """Reconstruct the analysis state dictionary directly from SQLite database."""
+    try:
+        from simelab.database import (
+            get_dataset_meta, load_vertices, load_edges,
+            load_disinfo_scores, load_hashtags, load_structural_holes
+        )
+        import json
+        import networkx as nx
+        import numpy as np
+
+        meta_row = get_dataset_meta(dataset_id)
+        if not meta_row:
+            return None
+
+        # Load rows from SQLite
+        vertices_rows = load_vertices(dataset_id)
+        edges_rows = load_edges(dataset_id)
+        disinfo_rows = load_disinfo_scores(dataset_id)
+        hashtags_rows = load_hashtags(dataset_id)
+        holes_rows = load_structural_holes(dataset_id)
+
+        # 1. Reconstruct meta
+        meta = {
+            "filename": meta_row["name"],
+            "filepath": meta_row["filepath"],
+            "graph_stats": {
+                "node_count": meta_row["nodes_count"],
+                "edge_count": meta_row["edges_count"],
+                "density": meta_row["density"],
+                "reciprocity": meta_row["reciprocity"],
+                "connected_components": meta_row["components"],
+            }
+        }
+        if meta_row["edge_types_json"]:
+            try:
+                meta["graph_stats"]["edge_types"] = json.loads(meta_row["edge_types_json"])
+            except Exception:
+                meta["graph_stats"]["edge_types"] = {}
+        if meta_row["overall_metrics_json"]:
+            try:
+                meta["overall_metrics"] = json.loads(meta_row["overall_metrics_json"])
+            except Exception:
+                pass
+
+        # 2. Reconstruct G
+        G = nx.DiGraph()
+        for v in vertices_rows:
+            node_id = v["id"]
+            attrs = {
+                "display_name": v["label"],
+                "degree": v["degree"],
+                "in_degree": v["in_degree"],
+                "out_degree": v["out_degree"],
+                "betweenness": v["betweenness"],
+                "closeness": v["closeness"],
+                "eigenvector": v["eigenvector"],
+                "pagerank": v["pagerank"],
+                "clustering_coefficient": v["clustering_coefficient"],
+                "followers": v["followers"],
+                "layout_x": v["layout_x"],
+                "layout_y": v["layout_y"],
+                "sentiment": v["sentiment"],
+                "cluster": v["cluster"],
+                "is_bot": bool(v["is_bot"]),
+                "bot_score": v["bot_score"],
+            }
+            if v["tweet_text"]:
+                attrs["tweet_text"] = v["tweet_text"]
+            if v["platform"]:
+                attrs["platform"] = v["platform"]
+            if v["topic"]:
+                attrs["topic"] = v["topic"]
+            if v["hashtags_json"]:
+                try:
+                    attrs["hashtags"] = json.loads(v["hashtags_json"])
+                except Exception:
+                    pass
+            G.add_node(node_id, **attrs)
+
+        for e in edges_rows:
+            G.add_edge(
+                e["source"],
+                e["target"],
+                weight=e["weight"],
+                date=e["date"],
+                edge_type=e["relation"],
+                Relationship=e["relation"],
+            )
+
+        # 3. Reconstruct Mock classes
+        from simelab.features import FEATURE_NAMES
+        class MockFeatureEngineer:
+            def __init__(self, G, vertices_rows):
+                self.G = G
+                self._nodes = sorted(list(G.nodes()))
+                self._node_to_idx = {node: i for i, node in enumerate(self._nodes)}
+                self.features_dict = {}
+                self._matrix = np.zeros((len(self._nodes), 9))
+                for v in vertices_rows:
+                    node_id = v["id"]
+                    if node_id not in self._node_to_idx:
+                        continue
+                    idx = self._node_to_idx[node_id]
+                    feats = {}
+                    if v["features_json"]:
+                        try:
+                            feats = json.loads(v["features_json"])
+                        except Exception:
+                            pass
+                    for col_idx, name in enumerate(FEATURE_NAMES):
+                        val = feats.get(name)
+                        if val is not None:
+                            self._matrix[idx, col_idx] = val
+                        else:
+                            if name == "degree_centrality":
+                                self._matrix[idx, col_idx] = v["degree"] or 0.0
+                            elif name == "betweenness_centrality":
+                                self._matrix[idx, col_idx] = v["betweenness"] or 0.0
+                            elif name == "closeness_centrality":
+                                self._matrix[idx, col_idx] = v["closeness"] or 0.0
+                            elif name == "eigenvector_centrality":
+                                self._matrix[idx, col_idx] = v["eigenvector"] or 0.0
+                            elif name == "pagerank":
+                                self._matrix[idx, col_idx] = v["pagerank"] or 0.0
+                            elif name == "clustering_coefficient":
+                                self._matrix[idx, col_idx] = v["clustering_coefficient"] or 0.0
+                    self.features_dict[node_id] = {
+                        name: float(self._matrix[idx, col_idx])
+                        for col_idx, name in enumerate(FEATURE_NAMES)
+                    }
+
+            def get_nodes(self):
+                return self._nodes
+
+            def build_matrix(self, force_recompute=False):
+                return self._matrix
+
+            def get_node(self, node):
+                idx = self._node_to_idx.get(node)
+                if idx is None:
+                    return None
+                return self._matrix[idx]
+
+            def get_top(self, dimension: int, k: int = 10):
+                col = self._matrix[:, dimension]
+                top_indices = np.argsort(col)[::-1][:k]
+                return [(self._nodes[i], float(col[i])) for i in top_indices]
+
+            def to_dict(self):
+                return self.features_dict
+
+            def to_dataframe(self):
+                import pandas as pd
+                df = pd.DataFrame(self._matrix, index=self._nodes, columns=FEATURE_NAMES)
+                df.index.name = "node"
+                return df
+
+        fe = MockFeatureEngineer(G, vertices_rows)
+
+        class MockSentimentAnalyzer:
+            def __init__(self, fe, vertices_rows):
+                self.fe = fe
+                self.nodes = fe.get_nodes()
+                self.n = len(self.nodes)
+                self.labels = {}
+                for v in vertices_rows:
+                    self.labels[v["id"]] = v["sentiment"] or "Neu"
+                self.cluster_sizes = {
+                    label: sum(1 for l in self.labels.values() if l == label)
+                    for label in ["Pos", "Neu", "Neg"]
+                }
+                from sklearn.preprocessing import MinMaxScaler
+                self.scaler = MinMaxScaler()
+                self.X_norm = self.scaler.fit_transform(fe.build_matrix())
+                label_to_id = {"Pos": 0, "Neu": 1, "Neg": 2}
+                self.cluster_ids = np.array([label_to_id.get(self.labels[node], 1) for node in self.nodes])
+                self.centroids = np.zeros((3, 9))
+                for label, cid in label_to_id.items():
+                    mask = self.cluster_ids == cid
+                    if mask.any():
+                        self.centroids[cid] = self.X_norm[mask].mean(axis=0)
+                from sklearn.metrics import silhouette_score
+                if len(set(self.cluster_ids)) > 1:
+                    try:
+                        self.silhouette = float(silhouette_score(self.X_norm, self.cluster_ids))
+                    except Exception:
+                        self.silhouette = None
+                else:
+                    self.silhouette = None
+
+            def polarization_index(self) -> float:
+                extreme = self.cluster_sizes.get("Pos", 0) + self.cluster_sizes.get("Neg", 0)
+                return extreme / max(self.n, 1)
+
+            def centroid_distance(self) -> float:
+                pos_cid = 0
+                neg_cid = 2
+                return float(np.linalg.norm(self.centroids[pos_cid] - self.centroids[neg_cid]))
+
+        sa = MockSentimentAnalyzer(fe, vertices_rows)
+
+        class MockDisinformationAnalyzer:
+            def __init__(self, G, disinfo_rows):
+                self.G = G
+                self.nodes = list(G.nodes())
+                self.scores = {}
+                self.risk_labels = {}
+                self.signals = {}
+                for row in disinfo_rows:
+                    node = row["node"]
+                    self.scores[node] = row["disinfo_score"]
+                    self.risk_labels[node] = row["risk_level"]
+                    try:
+                        self.signals[node] = json.loads(row["signals_json"]) if row["signals_json"] else {}
+                    except Exception:
+                        self.signals[node] = {}
+
+        da = MockDisinformationAnalyzer(G, disinfo_rows)
+
+        class MockCensorshipAnalyzer:
+            def __init__(self, G, holes_rows, fiedler_val, cvi_val):
+                self.G = G
+                self.fiedler_value = fiedler_val
+                self.cvi = cvi_val
+                self.betweenness = {node: G.nodes[node].get("betweenness", 0.0) for node in G.nodes()}
+                self.structural_holes = []
+                for row in holes_rows:
+                    node = row["node"]
+                    si_score = row["si_score"]
+                    details = {
+                        "node": node,
+                        "display_name": row["display_name"],
+                        "si_score": si_score,
+                        "betweenness": row["betweenness"],
+                        "degree": row["degree"],
+                        "components_after_removal": row["components_after_removal"],
+                        "component_increase": row["component_increase"],
+                        "is_fragmenting": bool(row["is_fragmenting"]),
+                    }
+                    self.structural_holes.append((node, si_score, details))
+
+            def _compute_fiedler(self):
+                return self.fiedler_value
+
+            def censorship_vulnerability_index(self):
+                return self.cvi
+
+            def structural_impact(self, node):
+                cb = self.betweenness.get(node, 0.0)
+                if self.G.is_directed():
+                    total_deg = self.G.in_degree(node) + self.G.out_degree(node)
+                else:
+                    total_deg = self.G.degree(node)
+                return cb * np.log(total_deg + 1)
+
+        fiedler_val = meta.get("overall_metrics", {}).get("fiedler_value", 0.05)
+        cvi_val = meta.get("overall_metrics", {}).get("cvi", 10.0)
+        ca = MockCensorshipAnalyzer(G, holes_rows, fiedler_val, cvi_val)
+
+        class MockHashtagAnalyzer:
+            def __init__(self, hashtags_rows):
+                self.authenticity = {}
+                self.lifecycle = {}
+                self.gmm_labels = {}
+                for row in hashtags_rows:
+                    tag = row["hashtag"]
+                    self.authenticity[tag] = {
+                        "score": row["score"],
+                        "label": row["label"],
+                    }
+                    self.lifecycle[tag] = row["lifecycle_phase"]
+                    self.gmm_labels[tag] = row["label"]
+
+            def artificial_ratio(self):
+                total = len(self.authenticity)
+                if total == 0:
+                    return 0.0
+                artificial = sum(1 for v in self.gmm_labels.values() if v == "Artificial")
+                return artificial / total
+
+        ha = MockHashtagAnalyzer(hashtags_rows)
+
+        state = {
+            "G": G,
+            "meta": meta,
+            "fe": fe,
+            "sa": sa,
+            "da": da,
+            "ca": ca,
+            "ha": ha,
+            "filepath": meta_row["filepath"],
+        }
+        analyses[dataset_id] = state
+        return state
+
+    except Exception as ex:
+        print(f"Error reconstructing analysis from SQLite for '{dataset_id}': {ex}")
+        return None
 
 
 def _save_analysis_to_sqlite(dataset_id: str, state: dict):
@@ -331,11 +637,16 @@ def _save_analysis_to_sqlite(dataset_id: str, state: dict):
 def _get_analysis(dataset_id: str) -> dict:
     """Get cached analysis or raise 404."""
     if dataset_id not in analyses:
-        # Try to recover it from SQLite filepath
+        # Try loading directly from SQLite
+        state = _load_analysis_from_db(dataset_id)
+        if state:
+            return state
+
+        # Fallback to recovering from Excel/CSV file if not in DB (or DB load failed)
         from simelab.database import get_stored_filepath
         fp = get_stored_filepath(dataset_id)
         if fp and os.path.exists(fp):
-            print(f"Lazy-loading dataset '{dataset_id}' from {fp}...")
+            print(f"Lazy-loading dataset '{dataset_id}' from file {fp}...")
             try:
                 return _run_full_analysis(fp, dataset_id)
             except Exception as e:
@@ -409,6 +720,282 @@ async def upload_file(file: UploadFile = File(...)):
 
     except Exception as e:
         raise HTTPException(500, f"Analysis failed: {str(e)}")
+
+
+def compute_ai_insights(G, sa, da, ha, overall_metrics=None) -> dict:
+    from collections import Counter
+    import re
+    import numpy as np
+    import json
+
+    # 1. Platform breakdown
+    platforms = [G.nodes[n].get("platform", "Twitter") for n in G.nodes()]
+    plat_counts = Counter(platforms)
+    total_nodes = len(G) or 1
+    platform_breakdown = [
+        {"platform": plat, "count": count, "percentage": int(round((count / total_nodes) * 100))}
+        for plat, count in plat_counts.items()
+    ]
+    platform_breakdown.sort(key=lambda x: x["count"], reverse=True)
+
+    # 2. Hashtag trends
+    hashtag_counts = Counter()
+    hashtag_sentiments = {}
+    for n in G.nodes():
+        node_tags = G.nodes[n].get("hashtags", [])
+        if isinstance(node_tags, str):
+            try:
+                node_tags = json.loads(node_tags)
+            except Exception:
+                node_tags = [w.strip("#").lower() for w in node_tags.split() if w.startswith("#")]
+        for tag in node_tags:
+            hashtag_counts[tag] += 1
+            if tag not in hashtag_sentiments:
+                hashtag_sentiments[tag] = []
+            hashtag_sentiments[tag].append(G.nodes[n].get("sentiment", "Neu"))
+            
+    hashtag_trends = []
+    for tag, count in hashtag_counts.most_common(15):
+        sents = hashtag_sentiments.get(tag, [])
+        pos_c = sents.count("Pos")
+        neg_c = sents.count("Neg")
+        dom_sent = "Positive" if pos_c > neg_c else ("Negative" if neg_c > pos_c else "Neutral")
+        hashtag_trends.append({
+            "hashtag": tag,
+            "count": count,
+            "sentiment": dom_sent
+        })
+
+    # 3. Polarization Index
+    polarization_index = 0.0
+    if sa:
+        polarization_index = sa.polarization_index()
+
+    # 4. Bot activity score
+    bot_count = 0
+    suspicious_accounts = []
+    if da:
+        bot_count = sum(1 for n in G.nodes() if da.risk_labels.get(n) in ('likely_disinfo', 'suspicious'))
+        sorted_suspicious = sorted(
+            [n for n in G.nodes() if da.risk_labels.get(n) in ('likely_disinfo', 'suspicious')],
+            key=lambda x: da.scores.get(x, 0.0),
+            reverse=True
+        )[:5]
+        for node in sorted_suspicious:
+            reasons = list(da.signals.get(node, {}).keys())
+            if not reasons:
+                reasons = ["High automation score" if da.risk_labels.get(node) == "likely_disinfo" else "Moderate suspicion"]
+            suspicious_accounts.append({
+                "id": node,
+                "label": G.nodes[node].get("display_name", node),
+                "score": float(da.scores.get(node, 0.0)),
+                "reasons": reasons
+            })
+    bot_activity_score = bot_count / max(total_nodes, 1)
+
+    # 5. Timeline Events
+    date_counts = Counter()
+    for n in G.nodes():
+        d = G.nodes[n].get("date")
+        if d:
+            # handle formats like 2024-06-25T12:00:00 or space-separated
+            day = d.split('T')[0].split(' ')[0]
+            date_counts[day] += 1
+    
+    sorted_dates = sorted(date_counts.keys())
+    timeline_events = []
+    if sorted_dates:
+        avg_vol = sum(date_counts.values()) / len(date_counts)
+        for day in sorted_dates:
+            count = date_counts[day]
+            sig = "high" if count > avg_vol * 2.5 else ("medium" if count > avg_vol * 1.5 else "low")
+            timeline_events.append({
+                "date": day,
+                "event": f"Spike in activity ({count} posts)" if count > avg_vol * 2 else f"{count} posts",
+                "volume": count,
+                "significance": sig
+            })
+    timeline_events = timeline_events[-10:]
+
+    # 6. Key Narratives
+    key_narratives = []
+    bigram_counts = Counter()
+    bigram_sentiments = {}
+    docs = []
+    for n in G.nodes():
+        text = G.nodes[n].get("tweet_text", "")
+        if text and len(text) > 20:
+            docs.append((text.lower(), G.nodes[n].get("sentiment", "Neu")))
+            
+    stops = {
+        'the', 'and', 'for', 'that', 'this', 'with', 'from', 'have', 'are',
+        'was', 'not', 'but', 'you', 'all', 'can', 'had', 'her', 'his',
+        'its', 'our', 'out', 'has', 'been', 'were', 'they', 'their', 'will',
+        'about', 'what', 'when', 'where', 'which', 'would', 'could', 'should',
+        'http', 'https', 'co', 'com', 'just', 'like', 'dont', 'amp', 'via'
+    }
+    
+    for text, sent in docs:
+        words = [w for w in re.split(r'\s+', text) if len(w) > 3 and w not in stops]
+        for i in range(len(words) - 1):
+            bigram = f"{words[i]} {words[i+1]}"
+            bigram_counts[bigram] += 1
+            if bigram not in bigram_sentiments:
+                bigram_sentiments[bigram] = []
+            bigram_sentiments[bigram].append(sent)
+            
+    for bigram, count in bigram_counts.most_common(5):
+        sents = bigram_sentiments.get(bigram, [])
+        pos_c = sents.count("Pos")
+        neg_c = sents.count("Neg")
+        dom_sent = "Positive" if pos_c > neg_c else ("Negative" if neg_c > pos_c else "Neutral")
+        
+        examples = []
+        for text, _ in docs:
+            if bigram in text:
+                examples.append(text)
+                if len(examples) >= 2:
+                    break
+                    
+        key_narratives.append({
+            "theme": bigram,
+            "keywords": bigram.split(),
+            "postCount": count,
+            "dominantSentiment": dom_sent,
+            "examplePosts": examples
+        })
+
+    # 7. Summary
+    top_node = sorted(G.nodes(), key=lambda x: G.nodes[x].get("degree", 0), reverse=True)
+    top_node_label = G.nodes[top_node[0]].get("display_name", top_node[0]) if top_node else None
+    top_node_deg = G.nodes[top_node[0]].get("degree", 0) if top_node else 0
+    pos_pct = int(round((sum(1 for n in G.nodes() if G.nodes[n].get("sentiment") == "Pos") / max(total_nodes, 1)) * 100))
+    theme_str = ", ".join(n["theme"] for n in key_narratives[:3])
+    
+    summary = f"This dataset contains {total_nodes} accounts and {G.number_of_edges()} connections across the network. " \
+              f"The conversation is {pos_pct}% positive overall. "
+    if top_node_label:
+        summary += f"The most connected account is @{top_node_label} with {top_node_deg} connections. "
+    if theme_str:
+        summary += f"Key discussion themes include: {theme_str}. "
+    if bot_count > 0:
+        summary += f"{bot_count} accounts show suspicious activity patterns consistent with automated or coordinated behaviour. "
+    
+    density = overall_metrics.get("density", 0.0) if overall_metrics else ( (2 * G.number_of_edges()) / (total_nodes * (total_nodes - 1)) if total_nodes > 1 else 0.0)
+    summary += f"The network density is {density:.4f}, indicating {'a highly interconnected' if G.number_of_edges() > total_nodes * 2 else 'a loosely connected'} conversation."
+
+    return {
+        "summary": summary,
+        "keyNarratives": key_narratives,
+        "topEvents": timeline_events,
+        "suspiciousAccounts": suspicious_accounts,
+        "platformBreakdown": platform_breakdown,
+        "hashtagTrends": hashtag_trends,
+        "botActivityScore": bot_activity_score,
+        "polarizationIndex": polarization_index,
+    }
+
+
+@app.get("/api/simelab/analysis-data")
+async def get_analysis_data(dataset_id: str = Query("default")):
+    """Get the complete graph structure, computed SNA metrics, and AI insights."""
+    import json
+    state = _get_analysis(dataset_id)
+    G = state["G"]
+    meta = state["meta"]
+    sa = state["sa"]
+    da = state["da"]
+    ha = state["ha"]
+
+    # 1. Build vertices
+    vertices = []
+    for n in G.nodes():
+        attrs = G.nodes[n]
+        v = {
+            "id": n,
+            "label": attrs.get("display_name", n) or n,
+            "degree": attrs.get("degree", 0) or 0,
+            "inDegree": attrs.get("in_degree", 0) or 0,
+            "outDegree": attrs.get("out_degree", 0) or 0,
+            "betweenness": attrs.get("betweenness", 0.0) or 0.0,
+            "closeness": attrs.get("closeness", 0.0) or 0.0,
+            "eigenvector": attrs.get("eigenvector", 0.0) or 0.0,
+            "pagerank": attrs.get("pagerank", 0.0) or 0.0,
+            "clusteringCoefficient": attrs.get("clustering_coefficient", 0.0) or 0.0,
+            "cluster": attrs.get("cluster", -1) if attrs.get("cluster") is not None else -1,
+            "clusterLabel": f"Cluster {attrs.get('cluster') + 1}" if attrs.get("cluster") is not None and attrs.get("cluster") >= 0 else "",
+            "sentiment": attrs.get("sentiment", "Neu"),
+            "followers": attrs.get("followers", 0) or 0,
+            "retweets": attrs.get("retweets", 0) or 0,
+            "favorites": attrs.get("favorites", 0) or 0,
+            "date": attrs.get("date", "") or "",
+            "platform": attrs.get("platform", "Twitter") or "Twitter",
+            "topic": attrs.get("topic", "RejectFinanceBill2024") or "RejectFinanceBill2024",
+            "tweetText": attrs.get("tweet_text", "") or "",
+            "hashtags": list(attrs.get("hashtags", [])) if attrs.get("hashtags") else [],
+            "isBot": bool(attrs.get("is_bot", False)),
+            "botScore": attrs.get("bot_score", 0.0) or 0.0,
+            "image_url": attrs.get("image_url"),
+            "x": attrs.get("layout_x", 0.0) or 0.0,
+            "y": attrs.get("layout_y", 0.0) or 0.0,
+        }
+        # Parse hashtags if stored as JSON string
+        if isinstance(v["hashtags"], str):
+            try:
+                v["hashtags"] = json.loads(v["hashtags"])
+            except Exception:
+                v["hashtags"] = []
+        vertices.append(v)
+
+    # 2. Build edges
+    edges = []
+    for src, tgt, edge_attrs in G.edges(data=True):
+        edges.append({
+            "source": src,
+            "target": tgt,
+            "weight": edge_attrs.get("weight", 1.0) or 1.0,
+            "date": edge_attrs.get("date", "") or "",
+            "relation": edge_attrs.get("edge_type", edge_attrs.get("Relationship", "mention")) or "mention",
+        })
+
+    # 3. Build overall metrics
+    gs = meta.get("graph_stats", {})
+    pos_count = sum(1 for v in vertices if v["sentiment"] == "Pos")
+    neu_count = sum(1 for v in vertices if v["sentiment"] == "Neu")
+    neg_count = sum(1 for v in vertices if v["sentiment"] == "Neg")
+
+    top_inf_nodes = sorted(vertices, key=lambda x: x["degree"], reverse=True)[:10]
+    top_bet_nodes = sorted(vertices, key=lambda x: x["betweenness"], reverse=True)[:10]
+
+    avg_degree = sum(v["degree"] for v in vertices) / max(len(vertices), 1)
+
+    metrics = {
+        "totalVertices": len(vertices),
+        "totalEdges": len(edges),
+        "density": gs.get("density", 0.0) or 0.0,
+        "diameter": meta.get("overall_metrics", {}).get("diameter", 0.0) or 0.0,
+        "avgClusteringCoefficient": meta.get("overall_metrics", {}).get("avgClusteringCoefficient", 0.0) or 0.0,
+        "connectedComponents": gs.get("connected_components", 1) or 1,
+        "reciprocity": gs.get("reciprocity", 0.0) or 0.0,
+        "avgDegree": avg_degree,
+        "sentimentDistribution": {
+            "Pos": pos_count,
+            "Neu": neu_count,
+            "Neg": neg_count,
+        },
+        "topInfluencers": top_inf_nodes,
+        "topBetweenness": top_bet_nodes,
+    }
+
+    # 4. Build AI Insights
+    ai_ins = compute_ai_insights(G, sa, da, ha, gs)
+
+    return {
+        "vertices": vertices,
+        "edges": edges,
+        "metrics": metrics,
+        "ai_insights": ai_ins,
+    }
 
 
 @app.get("/api/simelab/features")
@@ -712,12 +1299,21 @@ if __name__ == "__main__":
         def _recover():
             for ds in recovered:
                 did = ds["id"]
+                print(f"  [bg] Recovering '{did}' from SQLite...")
+                try:
+                    state = _load_analysis_from_db(did)
+                    if state:
+                        print(f"  [bg] ✓ Recovered '{did}' from SQLite.")
+                        continue
+                except Exception as e:
+                    print(f"  [bg] SQLite recovery failed for '{did}': {e}")
+
                 fp = get_stored_filepath(did)
                 if fp and os.path.exists(fp):
-                    print(f"  [bg] Recovering '{did}' from {fp}...")
+                    print(f"  [bg] Recovering '{did}' from file {fp}...")
                     try:
                         _run_full_analysis(fp, did)
-                        print(f"  [bg] ✓ Recovered '{did}'.")
+                        print(f"  [bg] ✓ Recovered '{did}' from file.")
                     except Exception as e:
                         print(f"  [bg] ✗ Recovery of '{did}' failed: {e}")
                 else:
@@ -729,12 +1325,16 @@ if __name__ == "__main__":
     # Optional pre-load via env var
     if os.environ.get("SIMELAB_PRELOAD") == "1" and os.path.exists(DEFAULT_DATASET):
         if "default" not in analyses:
-            print("Pre-loading default dataset in background (this may take ~60s)...")
+            print("Pre-loading default dataset in background...")
             import threading
             def _preload():
                 try:
+                    state = _load_analysis_from_db("default")
+                    if state:
+                        print("  Default dataset loaded from SQLite.")
+                        return
                     _run_full_analysis(DEFAULT_DATASET, "default")
-                    print("  Default dataset loaded.")
+                    print("  Default dataset loaded from file.")
                 except Exception as e:
                     print(f"  Warning: Could not pre-load default: {e}")
             threading.Thread(target=_preload, daemon=True).start()

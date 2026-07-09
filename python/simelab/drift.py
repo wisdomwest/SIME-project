@@ -106,7 +106,7 @@ class SemanticDriftAnalyzer:
         self.df = self.df.drop_duplicates(subset=["tweet_text"])
         return self.df
 
-    def analyze(self, api_key: str, sample_size: int = 5000) -> Dict[str, Any]:
+    def analyze(self, api_key: str, sample_size: int = 1500) -> Dict[str, Any]:
         """
         Run the semantic drift analysis.
         Divides tweets chronologically, samples, and queries LLM.
@@ -254,8 +254,25 @@ Return ONLY the JSON. Do not include markdown code blocks, do not write '```json
 
             except urllib.error.HTTPError as e:
                 last_error = e
-                # HTTP errors represent server/credential issues; don't retry, raise immediately
-                break
+                err_body = ""
+                try:
+                    err_body = e.read().decode("utf-8")
+                except Exception:
+                    pass
+                # Cache the read body so it can be accessed again without re-reading the drained stream
+                e.cached_body = err_body
+                
+                is_context_error = False
+                if e.code in (400, 413):
+                    if any(word in err_body.lower() for word in ("context", "token", "length", "too large", "limit")):
+                        is_context_error = True
+                
+                if is_context_error:
+                    current_sample_size = max(10, current_sample_size // 2)
+                    print(f"Semantic drift analysis attempt {attempt + 1} failed due to context length. Retrying with sample size {current_sample_size}...")
+                else:
+                    # Other HTTP errors (401, 403, etc.) represent credential/system errors; raise immediately
+                    break
             except Exception as e:
                 last_error = e
                 # For network timeouts or connection resets, reduce sample size and retry
@@ -264,7 +281,12 @@ Return ONLY the JSON. Do not include markdown code blocks, do not write '```json
 
         # If we reached here, raise the last error
         if isinstance(last_error, urllib.error.HTTPError):
-            err_msg = last_error.read().decode("utf-8")
+            err_msg = getattr(last_error, "cached_body", "")
+            if not err_msg:
+                try:
+                    err_msg = last_error.read().decode("utf-8")
+                except Exception:
+                    err_msg = "Unknown HTTP error"
             try:
                 err_data = json.loads(err_msg)
                 detail = err_data.get("error", {}).get("message", err_msg)

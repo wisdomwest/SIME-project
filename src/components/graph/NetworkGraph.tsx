@@ -208,7 +208,7 @@ const NetworkGraph: React.FC<NetworkGraphProps> = ({
               'width': 0.4,
               'line-color': isDark ? '#E6E1D8' : '#1A1A1A',
               'opacity': isDark ? 0.20 : 0.12,
-              'curve-style': 'bezier',
+              'curve-style': 'haystack',
             },
           },
           {
@@ -221,6 +221,9 @@ const NetworkGraph: React.FC<NetworkGraphProps> = ({
         maxZoom: 5,
         wheelSensitivity: 0.25,
         pixelRatio: 1,
+        hideEdgesOnViewport: true,
+        textureOnViewport: true,
+        motionBlur: true,
       });
 
       cyRef.current = cy;
