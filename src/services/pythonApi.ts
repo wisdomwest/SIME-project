@@ -3,6 +3,10 @@
  * All calls go through the Vite proxy: /api/simelab/* → localhost:8000
  */
 
+import type { GraphData } from '../engine/csvParserEnhanced';
+import type { ComputedMetrics } from '../engine/graphMetrics';
+import type { AIInsights } from '../engine/aiInsights';
+
 const BASE = '/api/simelab';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -16,6 +20,7 @@ export interface AnalysisSummary {
   reciprocity: number | null;
   edge_types: Record<string, number>;
   top_influencers: InfluencerRow[];
+  cache_hit: boolean;
 }
 
 export interface InfluencerRow {
@@ -35,6 +40,7 @@ export interface FeatureData {
 export interface SentimentData {
   dataset_id: string;
   silhouette: number | null;
+  silhouette_sample_size: number;
   polarization_index: number;
   centroid_distance: number;
   clusters: { Neg: number; Neu: number; Pos: number };
@@ -62,6 +68,13 @@ export interface CensorshipData {
   dataset_id: string;
   fiedler_value: number;
   cvi: number | null;
+  component_count: number;
+  largest_component_nodes: number;
+  largest_component_share: number;
+  largest_component_fiedler: number | null;
+  largest_component_normalized_fiedler: number | null;
+  largest_component_max_betweenness: number | null;
+  component_cvi: number | null;
   structural_holes: Array<{
     node: string;
     display_name: string;
@@ -183,8 +196,14 @@ export interface CommercialData {
 async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, options);
   if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`API error ${res.status}: ${err}`);
+    const contentType = res.headers.get('content-type') || '';
+    const body = contentType.includes('application/json')
+      ? await res.json().catch(() => null)
+      : await res.text().catch(() => '');
+    const detail = body && typeof body === 'object' && 'detail' in body
+      ? String(body.detail)
+      : String(body || res.statusText);
+    throw new Error(detail);
   }
   return res.json();
 }
@@ -219,15 +238,15 @@ export async function getHashtags(datasetId = 'default'): Promise<HashtagData> {
   return apiFetch(`/hashtags?dataset_id=${encodeURIComponent(datasetId)}`);
 }
 
-export async function getSemanticDrift(datasetId: string, apiKey: string): Promise<DriftData> {
-  return apiFetch(`/drift?dataset_id=${encodeURIComponent(datasetId)}&api_key=${encodeURIComponent(apiKey)}`);
+export async function getSemanticDrift(datasetId: string): Promise<DriftData> {
+  return apiFetch(`/drift?dataset_id=${encodeURIComponent(datasetId)}`);
 }
 
-export async function getCommercial(datasetId: string, apiKey: string, baseKeywords: string, useAi: boolean): Promise<CommercialData> {
+export async function getCommercial(datasetId: string, baseKeywords: string, useAi: boolean): Promise<CommercialData> {
   return apiFetch<CommercialData>('/commercial', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ dataset_id: datasetId, api_key: apiKey, base_keywords: baseKeywords, use_ai: useAi }),
+    body: JSON.stringify({ dataset_id: datasetId, base_keywords: baseKeywords, use_ai: useAi }),
   });
 }
 
@@ -245,7 +264,8 @@ export async function exportResults(datasetId = 'default', format = 'csv'): Prom
 
 export interface BackendLLMConfig {
   provider: 'nvidia-nim' | 'deepseek' | 'tokenrouter';
-  apiKey: string;
+  configured: boolean;
+  model: string;
 }
 
 export async function getBackendLLMConfig(): Promise<BackendLLMConfig> {
@@ -253,15 +273,12 @@ export async function getBackendLLMConfig(): Promise<BackendLLMConfig> {
 }
 
 export interface BackendAnalysisData {
-  vertices: any[];
-  edges: any[];
-  metrics: any;
-  ai_insights: any;
+  vertices: GraphData['vertices'];
+  edges: GraphData['edges'];
+  metrics: ComputedMetrics;
+  ai_insights: AIInsights;
 }
 
 export async function getAnalysisData(datasetId = 'default'): Promise<BackendAnalysisData> {
   return apiFetch(`/analysis-data?dataset_id=${encodeURIComponent(datasetId)}`);
 }
-
-
-

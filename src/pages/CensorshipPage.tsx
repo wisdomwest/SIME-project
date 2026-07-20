@@ -111,6 +111,18 @@ function CensorshipView() {
   if (!data) return null;
 
   const fragmenting = data.structural_holes.filter((h) => h.is_fragmenting).length;
+  const disconnected = data.component_count > 1;
+  const displayedFiedler = disconnected
+    ? data.largest_component_fiedler
+    : data.fiedler_value;
+  const displayedCvi = disconnected ? data.component_cvi : data.cvi;
+  const connectivityCaption = displayedFiedler == null
+    ? 'Unavailable'
+    : displayedFiedler < 0.01
+      ? 'Very fragile'
+      : displayedFiedler < 0.1
+        ? 'Loosely connected'
+        : 'Robust';
 
   return (
     <div className="px-8 py-10 max-w-[1280px] mx-auto space-y-10">
@@ -123,10 +135,10 @@ function CensorshipView() {
           Network Connectivity and Structural Bridges
         </h1>
         <p className="text-base text-ink-soft max-w-2xl leading-relaxed">
-          The Fiedler value (λ₂ of the graph Laplacian) measures algebraic connectivity. A small λ₂ means
-          the network is one bridge-removal away from fragmentation. The{' '}
+          The Fiedler value (λ₂ of the graph Laplacian) measures algebraic connectivity. A disconnected
+          whole network has λ₂ = 0, so this page also reports λ₂ for the largest connected component. The{' '}
           <strong className="text-ink">Censorship Vulnerability Index</strong> divides the highest
-          betweenness by λ₂ — high CVI means a single account removal could shatter the network.
+          betweenness by the matching λ₂; CVI is unavailable for a disconnected whole network.
         </p>
       </header>
 
@@ -134,18 +146,20 @@ function CensorshipView() {
         <div className="p-6">
           <StatGrid>
             <StatBlock
-              label="Fiedler λ₂"
-              value={data.fiedler_value.toFixed(4)}
-              caption={data.fiedler_value < 0.01 ? 'Near-fragmentation' : data.fiedler_value < 0.1 ? 'Loose' : 'Robust'}
-              emphasis={data.fiedler_value < 0.01 ? 'neg' : data.fiedler_value < 0.1 ? 'warn' : 'pos'}
-              explainer="Second-smallest eigenvalue of the graph Laplacian. Near zero = network is one bridge-removal from falling apart."
+              label={disconnected ? 'Giant-component λ₂' : 'Fiedler λ₂'}
+              value={displayedFiedler?.toFixed(4) ?? '—'}
+              caption={disconnected ? `${data.component_count} total components · ${connectivityCaption}` : connectivityCaption}
+              emphasis={displayedFiedler != null && displayedFiedler < 0.01 ? 'neg' : displayedFiedler != null && displayedFiedler < 0.1 ? 'warn' : 'pos'}
+              explainer={disconnected
+                ? `The whole graph has ${data.component_count} components and λ₂ = 0. This is the documented unnormalized Fiedler value of the largest component, covering ${(data.largest_component_share * 100).toFixed(1)}% of accounts.`
+                : 'Second-smallest eigenvalue of the unnormalized graph Laplacian. Smaller values mean fewer redundant paths.'}
             />
             <StatBlock
-              label="CVI"
-              value={data.cvi?.toFixed(2) ?? '—'}
-              caption={data.cvi && data.cvi > 100 ? 'Highly vulnerable' : data.cvi && data.cvi > 10 ? 'Moderate' : 'Resilient'}
-              emphasis={data.cvi && data.cvi > 100 ? 'neg' : data.cvi && data.cvi > 10 ? 'warn' : 'pos'}
-              explainer="Censorship Vulnerability Index = max betweenness ÷ Fiedler value. High CVI = a single account removal could fragment the network."
+              label={disconnected ? 'Giant-component CVI' : 'CVI'}
+              value={displayedCvi?.toFixed(6) ?? 'N/A'}
+              caption={disconnected ? `${(data.largest_component_share * 100).toFixed(1)}% node coverage` : 'Whole-network value'}
+              emphasis={displayedFiedler != null && displayedFiedler < 0.1 ? 'warn' : 'ink'}
+              explainer="SIMElab custom index = maximum directed betweenness ÷ the matching unnormalized Fiedler value. It is undefined when λ₂ = 0, so disconnected networks use internally consistent giant-component values."
             />
             <StatBlock
               label="Fragmenting"
@@ -163,7 +177,16 @@ function CensorshipView() {
         </div>
       </Panel>
 
-      {data.fiedler_value < 0.01 && (
+      {disconnected ? (
+        <div className="border border-signal-neg bg-signal-neg-soft p-5 flex items-start gap-3">
+          <AlertTriangle size={16} className="text-signal-neg shrink-0 mt-0.5" />
+          <p className="text-sm text-ink">
+            <strong className="text-signal-neg">Network is already fragmented into {data.component_count} components.</strong>{' '}
+            The giant component contains {data.largest_component_nodes.toLocaleString()} accounts
+            ({(data.largest_component_share * 100).toFixed(1)}%) and has λ₂ = {data.largest_component_fiedler?.toFixed(4) ?? 'N/A'}.
+          </p>
+        </div>
+      ) : data.fiedler_value < 0.01 && (
         <div className="border border-signal-neg bg-signal-neg-soft p-5 flex items-start gap-3">
           <AlertTriangle size={16} className="text-signal-neg shrink-0 mt-0.5" />
           <p className="text-sm text-ink">

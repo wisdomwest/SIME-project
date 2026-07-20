@@ -1,15 +1,14 @@
 import { useState } from 'react';
 import { useUrlState } from '../app/useUrlState';
 import { useSocialData } from '../hooks/useSocialData';
-import { getSemanticDrift } from '../services/pythonApi';
+import { getSemanticDrift, DriftData } from '../services/pythonApi';
 import { getConfig } from '../services/llmService';
 import { Eyebrow } from '../components/primitives/Eyebrow';
 import { Panel } from '../components/primitives/Panel';
 import { StatBlock, StatGrid } from '../components/primitives/StatBlock';
 import { Button } from '../components/primitives/Button';
 import { PythonOnlyWrap } from '../components/layout/BackendOffline';
-import { Loader2, Brain, AlertTriangle, Key } from 'lucide-react';
-import { saveConfig, LLMProvider } from '../services/llmService';
+import { Loader2, Brain, AlertTriangle } from 'lucide-react';
 
 export function DriftPage() {
   return (
@@ -25,24 +24,19 @@ function DriftView() {
   const routeDataset = ('datasetId' in route ? (route as { datasetId: string }).datasetId : '') as string;
   const datasetId = pythonDatasetId ?? routeDataset;
   const config = getConfig();
-  const [showKey, setShowKey] = useState(false);
-  const [apiKey, setApiKey] = useState('');
-  const [provider, setProvider] = useState<LLMProvider>('tokenrouter');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [data, setData] = useState<any>(driftData ?? null);
+  const [data, setData] = useState<DriftData | null>(driftData ?? null);
 
   async function run() {
-    const key = apiKey || config?.apiKey;
-    if (!key) {
-      setError('Add an API key first.');
-      setShowKey(true);
+    if (!config) {
+      setError('Server-side LLM is not configured. Add a provider key to the backend environment.');
       return;
     }
     setLoading(true);
     setError(null);
     try {
-      const r = await getSemanticDrift(datasetId, key);
+      const r = await getSemanticDrift(datasetId);
       setData(r);
       setDriftData(r);
     } catch (e) {
@@ -84,37 +78,11 @@ function DriftView() {
         </Panel>
       )}
 
-      {(showKey || (!config && !data)) && (
-        <Panel eyebrow={<Eyebrow>API key</Eyebrow>} title="Provider credentials">
-          <p className="text-sm text-ink-soft mb-4">
-            Your key is stored in <code className="font-mono text-ember">localStorage</code> only. It never
-            touches our servers.
+      {!config && !data && (
+        <Panel eyebrow={<Eyebrow>LLM configuration</Eyebrow>} title="Server provider required">
+          <p className="text-sm text-ink-soft">
+            Configure TOKENROUTER_API_KEY, NVIDIA_API_KEY, or DEEPSEEK_API_KEY in the backend environment. Credentials are never sent to the browser.
           </p>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-2 mb-3">
-            {(['tokenrouter', 'nvidia-nim', 'deepseek'] as LLMProvider[]).map((p) => (
-              <button
-                key={p}
-                onClick={() => setProvider(p)}
-                className={`px-3 py-2 text-sm font-medium border ${
-                  provider === p ? 'border-ember text-ember bg-ember-soft' : 'border-rule text-ink-soft hover:border-ink'
-                }`}
-              >
-                {p === 'tokenrouter' ? 'TokenRouter' : p === 'nvidia-nim' ? 'NVIDIA NIM' : 'DeepSeek'}
-              </button>
-            ))}
-          </div>
-          <div className="flex gap-2">
-            <input
-              type="password"
-              value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
-              placeholder="API key"
-              className="flex-1 bg-paper border border-rule px-3 py-2 text-sm font-mono focus:border-ink outline-none"
-            />
-            <Button onClick={() => { saveConfig(provider, apiKey.trim()); setShowKey(false); setApiKey(''); }} disabled={!apiKey.trim()}>
-              <Key size={12} /> Save
-            </Button>
-          </div>
         </Panel>
       )}
 

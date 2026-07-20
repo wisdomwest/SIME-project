@@ -106,7 +106,12 @@ class SemanticDriftAnalyzer:
         self.df = self.df.drop_duplicates(subset=["tweet_text"])
         return self.df
 
-    def analyze(self, api_key: str, sample_size: int = 1500) -> Dict[str, Any]:
+    def analyze(
+        self,
+        api_key: str,
+        sample_size: int = 1500,
+        network_context: str = "",
+    ) -> Dict[str, Any]:
         """
         Run the semantic drift analysis.
         Divides tweets chronologically, samples, and queries LLM.
@@ -148,6 +153,8 @@ class SemanticDriftAnalyzer:
 You are a senior social media intelligence analyst at SIMElab Africa (USIU-Africa, Nairobi).
 Analyze these two sets of tweets from a campaign (which may contain English, Swahili, and Sheng code-switching) to detect semantic drift and co-optation.
 
+{network_context}
+
 Early Tweets (Campaign Origin / Growth):
 {early_text}
 
@@ -177,8 +184,13 @@ Return ONLY the JSON. Do not include markdown code blocks, do not write '```json
 
                 is_tokenrouter = api_key.startswith("tr-") or tr_env_key != ""
                 is_nvidia = api_key.startswith("nvapi-") or nv_env_key != ""
+                is_deepseek = api_key.startswith("sk-")
 
-                if is_tokenrouter:
+                if is_deepseek:
+                    url = read_env_key("DEEPSEEK_API_URL", "https://api.deepseek.com/v1/chat/completions")
+                    model = read_env_key("DEEPSEEK_MODEL", "deepseek-chat")
+                    auth_key = api_key
+                elif is_tokenrouter:
                     url = read_env_key("TOKENROUTER_API_URL", "https://api.tokenrouter.com/v1/chat/completions")
                     model = read_env_key("TOKENROUTER_MODEL", "MiniMax-M3")
                     auth_key = api_key if api_key.startswith("tr-") else (tr_env_key or api_key)

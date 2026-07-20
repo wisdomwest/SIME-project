@@ -4,7 +4,6 @@
  */
 
 import { GraphData, Vertex } from '../engine/csvParserEnhanced';
-import { ComputedMetrics } from '../engine/graphMetrics';
 
 const COLUMNS: { header: string; pick: (v: Vertex) => string | number }[] = [
   { header: 'id', pick: (v) => v.id },
@@ -36,7 +35,7 @@ function csvEscape(s: string): string {
   return s;
 }
 
-export function exportResultsCSV(graphData: GraphData, _metrics: ComputedMetrics | null) {
+export function exportResultsCSV(graphData: GraphData) {
   const header = COLUMNS.map((c) => c.header).join(',');
   const lines = graphData.vertices.map((v) =>
     COLUMNS.map((c) => csvEscape(String(c.pick(v) ?? ''))).join(','),

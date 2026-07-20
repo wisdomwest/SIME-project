@@ -1,0 +1,16 @@
+source,target,Relationship,text
+a,b,Mention,#change launch
+b,c,Retweet,#change update
+c,d,Reply,#change progress
+d,e,Mention,#community voice
+e,f,Retweet,#community action
+f,a,Reply,#community response
+a,c,Mention,#change network
+c,e,Retweet,#change movement
+e,a,Reply,#change return
+b,d,Mention,#community bridge
+d,f,Retweet,#community signal
+f,b,Reply,#community loop
+a,d,Mention,#change #community
+b,e,Retweet,#change #community
+c,f,Reply,#change #community

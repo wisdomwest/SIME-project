@@ -2,7 +2,7 @@ import { useState, useCallback, useMemo, createContext, useContext, ReactNode, c
 import { GraphData } from '../engine/csvParserEnhanced';
 import { ComputedMetrics } from '../engine/graphMetrics';
 import { AIInsights } from '../engine/aiInsights';
-import { uploadFile, getSentiment, getDisinformation, getAnalysisData } from '../services/pythonApi';
+import { uploadFile, getSentiment, getDisinformation, getAnalysisData, SentimentData } from '../services/pythonApi';
 import { loadSession, saveSession, clearSession } from '../services/db';
 
 export interface ChatMessage {
@@ -92,6 +92,31 @@ const useSocialDataState = () => {
     selectedCluster: -1,
   });
 
+  const applySentimentData = useCallback((sentiment: SentimentData) => {
+    const sentimentMap = new Map<string, 'Pos' | 'Neu' | 'Neg'>();
+    sentiment.labels.forEach((label) => {
+      sentimentMap.set(label.node, label.sentiment as 'Pos' | 'Neu' | 'Neg');
+    });
+    setGraphData((previous) => {
+      if (!previous) return null;
+      return {
+        ...previous,
+        vertices: previous.vertices.map((vertex) => ({
+          ...vertex,
+          sentiment: sentimentMap.get(vertex.id) ?? vertex.sentiment,
+        })),
+      };
+    });
+    setComputedMetrics((previous) => previous ? {
+      ...previous,
+      sentimentDistribution: {
+        Pos: sentiment.clusters.Pos,
+        Neu: sentiment.clusters.Neu,
+        Neg: sentiment.clusters.Neg,
+      },
+    } : null);
+  }, []);
+
   // ─── IndexedDB persistence ─────────────────────────────────────────
   // Restore saved session on first mount (only if no file is being processed)
   const restoredRef = useRef(false);
@@ -170,7 +195,7 @@ const useSocialDataState = () => {
             },
           };
         });
-      } catch (_err) {
+      } catch {
         // Python backend may be unavailable on first restore — that's fine
       }
     }, 500);
@@ -340,6 +365,7 @@ const useSocialDataState = () => {
     resetFilters,
     goToLandingPage,
     dismissLoading,
+    applySentimentData,
   };
 };
 

@@ -4,6 +4,7 @@ import { Vertex, Edge } from './csvParserEnhanced';
 
 export function detectCommunities(vertices: Vertex[], edges: Edge[]): void {
   const graph = new Graph({ multi: false, allowSelfLoops: false });
+  const vertexById = new Map(vertices.map((vertex) => [vertex.id, vertex]));
 
   for (const v of vertices) graph.addNode(v.id);
   for (const e of edges) {
@@ -12,7 +13,9 @@ export function detectCommunities(vertices: Vertex[], edges: Edge[]): void {
         if (!graph.hasEdge(e.source, e.target)) {
           graph.addEdge(e.source, e.target, { weight: e.weight });
         }
-      } catch (_) {}
+      } catch {
+        // Ignore malformed or duplicate edges from imported datasets.
+      }
     }
   }
 
@@ -47,7 +50,7 @@ export function detectCommunities(vertices: Vertex[], edges: Edge[]): void {
       const sMap = clusterSentiment.get(cid)!;
       sMap.set(v.sentiment, (sMap.get(v.sentiment) || 0) + 1);
       const currentTop = clusterTopNode.get(cid);
-      const currentV = vertices.find(x => x.id === currentTop);
+      const currentV = currentTop ? vertexById.get(currentTop) : undefined;
       if (!currentV || v.degree > currentV.degree) {
         clusterTopNode.set(cid, v.id);
       }
@@ -65,7 +68,7 @@ export function detectCommunities(vertices: Vertex[], edges: Edge[]): void {
       const sentLabel = dominantSent === 'Pos' ? 'Positive' : dominantSent === 'Neg' ? 'Negative' : 'Neutral';
       v.clusterLabel = `Community ${cid + 1}: ${topNode} (${sentLabel})`;
     }
-  } catch (e) {
+  } catch {
     // Fallback: assign all to cluster 0
     vertices.forEach(v => { v.cluster = 0; v.clusterLabel = 'Community 1'; });
   }

@@ -1,0 +1,22 @@
+SIMElab — investor pitch
+
+Research teams, newsrooms, public institutions, NGOs, and brands already collect large social-network datasets. Their problem is turning those files into intelligence they can trust and act on. Today that work is slow, fragmented across spreadsheets and scripts, and often dependent on black-box scores that are difficult to defend.
+
+SIMElab turns a NodeXL workbook into an explainable intelligence workflow. A single upload produces a cleaned network, behavioral segmentation, disinformation-risk signals, structural-fragility analysis, hashtag lifecycles, semantic drift, analyst chat, and exportable reporting. Every upload is recomputed from source. Redis only restores the latest compressed result after a reload, so the experience is fast without returning stale analysis.
+
+The product already has verified technical proof. On the RejectFinanceBill2024 workbook, SIMElab processed 5,948 accounts and 8,741 directed connections after rejecting 1,065 invalid, empty, or self-loop rows. It identified one giant component containing 93.22 percent of accounts, a broadcaster-heavy structural segment of 4,063 accounts, and four high-impact brokers among the top twenty tested. Removing the leading broker, _james041, increased the component count from 148 to 426. The workbook also supplied 3,066 unique timestamped tweets for narrative and semantic-drift analysis.
+
+The engineering is designed to scale efficiently. SIMElab opens the workbook once, builds reusable indexes, shares centrality calculations across modules, detects connected components before applying connectivity mathematics, and caches only completed results. Those changes reduced full-workbook analysis time from 57.11 seconds to 33.99 seconds—about 40 percent faster.
+
+The commercial model starts with a paid pilot around one live dataset and one high-value decision. Successful pilots expand into team subscriptions for recurring monitoring, comparisons, reports, and AI assistance, followed by institutional deployments with stronger governance, integrations, and custom indicators.
+
+We are seeking design partners with real monitoring questions and investment to harden onboarding, validate paid demand, and build repeatable institutional delivery. SIMElab’s advantage is not one algorithm. It is a transparent, integrated, and topology-aware intelligence system that makes complex network analysis fast enough to use and rigorous enough to trust.
+
+Investor Q&A notes
+
+1. Traction claim: describe the RejectFinanceBill workbook as verified product and performance proof, not revenue traction.
+2. Structural sentiment: these clusters describe network behavior, not emotional text sentiment.
+3. Mathematical rigor: standard algorithms include K-means, silhouette, betweenness, and algebraic connectivity. Polarization, CVI, SI, and risk thresholds are project-defined decision-support heuristics.
+4. Technical trick: repeated work is removed by parsing once, reusing graph primitives, indexing hashtags in one pass, and computing connectivity only at a valid component level.
+5. AI positioning: Chat, Analysis, and Drift receive the same canonical metric payload as the dashboard. External model use requires customer consent and data-governance controls.
+6. Funding ask: do not state a funding amount until the team agrees on the round size, runway, and milestone plan.

@@ -54,6 +54,8 @@ class SentimentAnalyzer:
         "Neu": "#9E9E9E",   # Grey
         "Neg": "#F44336",   # Red
     }
+    METHOD_VERSION = 2
+    SILHOUETTE_SAMPLE_LIMIT = 2000
 
     def __init__(self, fe: FeatureEngineer):
         self.fe = fe
@@ -71,6 +73,7 @@ class SentimentAnalyzer:
         self.cluster_ids: Optional[np.ndarray] = None     # raw k-means cluster (0,1,2)
         self.centroids: Optional[np.ndarray] = None       # 3 × 9 cluster centers
         self.silhouette: Optional[float] = None
+        self.silhouette_sample_size: int = 0
         self.cluster_sizes: Dict[str, int] = {}
 
     def fit(self, k: int = 3, random_state: int = 42) -> Dict[str, str]:
@@ -94,9 +97,17 @@ class SentimentAnalyzer:
 
         # Silhouette score
         if k > 1 and len(set(self.cluster_ids)) > 1:
-            self.silhouette = silhouette_score(self.X_norm, self.cluster_ids)
+            sample_size = min(self.n, self.SILHOUETTE_SAMPLE_LIMIT)
+            self.silhouette = silhouette_score(
+                self.X_norm,
+                self.cluster_ids,
+                sample_size=sample_size if sample_size < self.n else None,
+                random_state=random_state,
+            )
+            self.silhouette_sample_size = sample_size
         else:
             self.silhouette = None
+            self.silhouette_sample_size = 0
 
         # Post-cluster labeling
         self._label_clusters()
@@ -111,12 +122,23 @@ class SentimentAnalyzer:
         """
         cluster_map = {}  # raw_id → "Pos"|"Neu"|"Neg"
 
-        # For each cluster, compute mean out-degree and mean reciprocity
+        # For each cluster, compute mean out-degree and mean reciprocity.
+        # Use actual directed out-degree; total degree was previously used here
+        # despite the methodology and UI both describing broadcaster behaviour.
+        denominator = max(self.n - 1, 1)
+        if self.fe.G.is_directed():
+            out_degree = np.array([
+                self.fe.G.out_degree(node) / denominator for node in self.nodes
+            ])
+        else:
+            out_degree = np.array([
+                self.fe.G.degree(node) / denominator for node in self.nodes
+            ])
         cluster_stats = {}
         for cid in range(self.kmeans.n_clusters):
             mask = self.cluster_ids == cid
             cluster_stats[cid] = {
-                "mean_out_degree": self.matrix[mask, DEGREE].mean(),
+                "mean_out_degree": out_degree[mask].mean(),
                 "mean_reciprocity": self.matrix[mask, RECIPROCITY].mean(),
                 "mean_betweenness": self.matrix[mask, BETWEENNESS].mean(),
                 "size": mask.sum(),
@@ -196,18 +218,26 @@ class SentimentAnalyzer:
         neg_cid = next((c for c, l in cluster_labels.items() if l == "Neg"), None)
 
         if pos_cid is not None and neg_cid is not None:
-            return float(np.linalg.norm(self.centroids[pos_cid] - self.centroids[neg_cid]))
+            raw_distance = np.linalg.norm(self.centroids[pos_cid] - self.centroids[neg_cid])
+            # Each feature is in [0, 1], so the 9-D Euclidean maximum is 3.
+            # Divide by sqrt(dimensions) to expose an interpretable [0, 1] score.
+            return float(raw_distance / np.sqrt(self.centroids.shape[1]))
         return 0.0
 
     def polarization_index(self) -> float:
         """
-        Polarization index: fraction of nodes in extreme clusters (Pos + Neg).
-        High values → few neutral observers, everyone has taken a side.
+        Balanced two-camp polarization in [0, 1].
+
+        The old formula counted every non-neutral node as polarization, even if
+        nearly all of them occupied the same camp. This score is maximal only
+        when the two outer clusters are both large and evenly balanced:
+        2 * min(Pos, Neg) / total.
         """
         if self.labels is None:
             self.fit()
-        extreme = self.cluster_sizes.get("Pos", 0) + self.cluster_sizes.get("Neg", 0)
-        return extreme / max(self.n, 1)
+        pos = self.cluster_sizes.get("Pos", 0)
+        neg = self.cluster_sizes.get("Neg", 0)
+        return (2.0 * min(pos, neg)) / max(self.n, 1)
 
     def to_dataframe(self):
         """Return DataFrame with nodes and their sentiment labels."""
@@ -243,12 +273,12 @@ class SentimentAnalyzer:
 
         dist = self.centroid_distance()
         lines.append(f"\nPos—Neg Centroid Distance: {dist:.4f}")
-        if dist > 3.0:
-            lines.append("  🔴 Highly polarized discourse")
-        elif dist < 1.0:
+        if dist >= 0.5:
+            lines.append("  🔴 Strong outer-cluster separation")
+        elif dist < 0.2:
             lines.append("  ⚠ Sentiment classification from structure is unreliable")
         else:
-            lines.append("  🟡 Moderate polarization")
+            lines.append("  🟡 Moderate outer-cluster separation")
 
         pi = self.polarization_index()
         lines.append(f"\nPolarization Index: {pi:.3f} ({pi*100:.1f}% in extreme clusters)")

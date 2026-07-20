@@ -2,13 +2,13 @@ import { useState } from 'react';
 import { useUrlState } from '../app/useUrlState';
 import { useSocialData } from '../hooks/useSocialData';
 import { getCommercial } from '../services/pythonApi';
-import { getConfig, saveConfig, LLMProvider } from '../services/llmService';
+import { getConfig } from '../services/llmService';
 import { Eyebrow } from '../components/primitives/Eyebrow';
 import { Panel } from '../components/primitives/Panel';
 import { StatBlock, StatGrid } from '../components/primitives/StatBlock';
 import { Button } from '../components/primitives/Button';
 import { PythonOnlyWrap } from '../components/layout/BackendOffline';
-import { Loader2, Store, AlertTriangle, Key, Search, CheckCircle2, HelpCircle } from 'lucide-react';
+import { Loader2, Store, AlertTriangle, Search, CheckCircle2, HelpCircle } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
   LineChart, Line, CartesianGrid, PieChart, Pie, Cell, Legend
@@ -27,33 +27,24 @@ function CommercialView() {
   const { pythonDatasetId, commercialData, setCommercialData } = useSocialData();
   const datasetId = pythonDatasetId ?? (('datasetId' in route ? (route as { datasetId: string }).datasetId : '') as string);
   const config = getConfig();
-  const [showKey, setShowKey] = useState(false);
-  const [apiKey, setApiKey] = useState('');
-  const [provider, setProvider] = useState<LLMProvider>('tokenrouter');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [baseKeywords, setBaseKeywords] = useState('Furniture, Computers and their accessories, Shoes, Betting and gambling, Vehicles and their accessories, Clothing, Airtime');
   const [expandedCategories, setExpandedCategories] = useState<Record<string, boolean>>({});
 
-  // We can run this even without an LLM key if we just want regex matches.
-  // The backend supports empty key. But we'll encourage a key.
+  // Exact matching can run without a configured LLM provider.
   const data = commercialData;
 
   async function run(withLLM: boolean) {
-    let keyToUse = '';
-    if (withLLM) {
-      keyToUse = apiKey || config?.apiKey || '';
-      if (!keyToUse) {
-        setError('Add an API key to enable advanced co-optation analysis.');
-        setShowKey(true);
-        return;
-      }
+    if (withLLM && !config) {
+      setError('Server-side LLM is not configured. Add a provider key to the backend environment.');
+      return;
     }
 
     setLoading(true);
     setError(null);
     try {
-      const r = await getCommercial(datasetId, keyToUse, baseKeywords, withLLM);
+      const r = await getCommercial(datasetId, baseKeywords, withLLM);
       setCommercialData(r);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Commercial analysis failed.');
@@ -64,7 +55,7 @@ function CommercialView() {
 
   // Formatting data for charts
   const categoryData = data ? Object.entries(data.category_counts)
-    .filter(([_, count]) => count > 0)
+    .filter(([, count]) => count > 0)
     .map(([name, count]) => ({ name, count }))
     .sort((a, b) => b.count - a.count) : [];
 
@@ -117,35 +108,11 @@ function CommercialView() {
         </Panel>
       )}
 
-      {(showKey || (!config && !data)) && (
-        <Panel eyebrow={<Eyebrow>API key</Eyebrow>} title="Advanced Provider Credentials">
-          <p className="text-sm text-ink-soft mb-4">
-            Your key is stored in <code className="font-mono text-ember">localStorage</code> only.
+      {!config && !data && (
+        <Panel eyebrow={<Eyebrow>LLM configuration</Eyebrow>} title="Optional server provider">
+          <p className="text-sm text-ink-soft">
+            Exact matching works without an LLM. Configure a provider key in the backend environment to enable automated expansion; credentials never enter the browser.
           </p>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-2 mb-3">
-            {(['tokenrouter', 'nvidia-nim', 'deepseek'] as LLMProvider[]).map((p) => (
-              <button
-                key={p}
-                onClick={() => setProvider(p)}
-                className={`px-3 py-2 text-sm font-medium border ${provider === p ? 'border-ember text-ember bg-ember-soft' : 'border-rule text-ink-soft hover:border-ink'
-                  }`}
-              >
-                {p === 'tokenrouter' ? 'TokenRouter' : p === 'nvidia-nim' ? 'NVIDIA NIM' : 'DeepSeek'}
-              </button>
-            ))}
-          </div>
-          <div className="flex gap-2">
-            <input
-              type="password"
-              value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
-              placeholder="API key"
-              className="flex-1 bg-paper border border-rule px-3 py-2 text-sm font-mono focus:border-ink outline-none"
-            />
-            <Button onClick={() => { saveConfig(provider, apiKey.trim()); setShowKey(false); setApiKey(''); }} disabled={!apiKey.trim()}>
-              <Key size={12} /> Save
-            </Button>
-          </div>
         </Panel>
       )}
 
@@ -307,7 +274,7 @@ function CommercialView() {
                               
                               {expandedCategories[category] && (
                                 <div className="mt-3 space-y-2 max-h-60 overflow-y-auto pr-2 border-l border-rule pl-3">
-                                  {mapping.sample_hits.map((hit: any, i: number) => (
+                                  {mapping.sample_hits.map((hit, i: number) => (
                                     <div key={i} className="text-xs bg-paper/30 p-2 border border-rule/30 rounded">
                                       <div className="flex justify-between items-center text-ink-mute mb-1 font-mono text-[10px]">
                                         <span>From: {hit.source || 'unknown'} {hit.target ? `→ To: ${hit.target}` : ''}</span>

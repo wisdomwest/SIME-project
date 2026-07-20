@@ -10,24 +10,40 @@ Usage:
     # Vite proxies /api/simelab/* → http://localhost:8000/api/simelab/*
 """
 
-import sys
+import asyncio
+import hashlib
+import json
+import logging
+import re
+import secrets
 import os
 import shutil
+import sys
+import tempfile
+import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 from typing import Optional
 
 # Ensure simelab package is importable
 sys.path.insert(0, str(Path(__file__).parent))
 
-def load_env():
-    # Try multiple paths to find .env file
-    paths = [
-        Path(__file__).parent.parent.parent / ".env",
+def _env_paths():
+    """Return dotenv candidates from most app-specific to least specific."""
+    candidates = (
+        Path.cwd() / ".env",
         Path(__file__).parent.parent / ".env",
         Path(__file__).parent / ".env",
-        Path.cwd() / ".env",
-    ]
-    for p in paths:
+        Path(__file__).parent.parent.parent / ".env",
+    )
+    return tuple(dict.fromkeys(path.resolve() for path in candidates))
+
+
+def load_env():
+    # Load the first app-local dotenv file. The process environment wins so
+    # deployment-provided secrets cannot be overwritten by a local .env file.
+    for p in _env_paths():
         if p.exists():
             print(f"Loading environment from {p}")
             with open(p, "r", encoding="utf-8") as f:
@@ -39,43 +55,44 @@ def load_env():
                         k, v = line.split("=", 1)
                         k = k.strip()
                         v = v.strip().strip("'").strip('"')
-                        os.environ[k] = v
+                        os.environ.setdefault(k, v)
             break
 
 load_env()
 
 
 def read_env_key(key: str, default: str = "") -> str:
-    paths = [
-        Path(__file__).parent.parent.parent / ".env",
-        Path(__file__).parent.parent / ".env",
-        Path(__file__).parent / ".env",
-        Path.cwd() / ".env",
-    ]
-    for p in paths:
-        if p.exists():
-            try:
-                with open(p, "r", encoding="utf-8") as f:
-                    for line in f:
-                        line = line.strip()
-                        if not line or line.startswith("#"):
-                            continue
-                        if "=" in line:
-                            k, v = line.split("=", 1)
-                            if k.strip() == key:
-                                return v.strip().strip("'").strip('"')
-            except Exception:
-                pass
+    # Environment variables are authoritative; fall back to the same
+    # app-local dotenv discovery used during startup.
+    if os.environ.get(key):
+        return os.environ[key]
+    for p in _env_paths():
+        if not p.exists():
+            continue
+        try:
+            with open(p, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith("#"):
+                        continue
+                    if "=" in line:
+                        k, v = line.split("=", 1)
+                        if k.strip() == key:
+                            return v.strip().strip("'").strip('"')
+        except Exception:
+            pass
+        # Do not fall through to a different application's .env file.
+        break
     return os.environ.get(key, default)
 
 from fastapi import FastAPI, UploadFile, File, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
-from pydantic import BaseModel
+from fastapi.responses import FileResponse
+from pydantic import BaseModel, Field
 import uvicorn
 
 from simelab.loader import load_nodexl
-from simelab.features import FeatureEngineer, INFLUENCE
+from simelab.features import FeatureEngineer, BETWEENNESS, INFLUENCE
 from simelab.sentiment import SentimentAnalyzer
 from simelab.disinformation import DisinformationAnalyzer
 from simelab.censorship import CensorshipAnalyzer
@@ -83,14 +100,17 @@ from simelab.export import ExportManager
 from simelab.drift import SemanticDriftAnalyzer
 from simelab.commercial import CommercialAnalyzer
 
-from simelab.database import (
-    save_full_analysis, get_dataset_meta, list_datasets,
-    get_stored_filepath, delete_dataset,
+from simelab.redis_cache import (
+    cache_status, get_dataset_meta, get_stored_filepath, list_datasets,
+    save_full_analysis, update_sentiment_analysis,
 )
 
-from fastapi.staticfiles import StaticFiles
-
 # ─── App Setup ───────────────────────────────────────────────────────────────
+
+logger = logging.getLogger("simelab")
+WORKSPACE_ROOT = Path(__file__).parent.parent.parent.resolve()
+PUBLIC_IMAGE_ROOTS = [WORKSPACE_ROOT / "RejectFinanceBill2024"]
+MAX_UPLOAD_BYTES = int(os.environ.get("SIMELAB_MAX_UPLOAD_MB", "200")) * 1024 * 1024
 
 app = FastAPI(
     title="SIMElab Data Explorer API",
@@ -98,28 +118,36 @@ app = FastAPI(
     version="1.0.0",
 )
 
+cors_origins = [
+    origin.strip()
+    for origin in os.environ.get(
+        "SIMELAB_CORS_ORIGINS",
+        "http://localhost:5173,http://127.0.0.1:5173",
+    ).split(",")
+    if origin.strip()
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# Mount workspace directory for static images
-app.mount("/api/simelab/images", StaticFiles(directory="/home/west/sime-lab-usiu"), name="images")
 
 # ─── State ───────────────────────────────────────────────────────────────────
 # In-memory analysis cache: dataset_id → {G, meta, fe, sa, da, ca, ha}
 analyses: dict = {}
 
 # Default dataset (RejectFinanceBill2024)
-DEFAULT_DATASET = str(Path(__file__).parent.parent.parent / "RejectFinanceBill2024.xlsx")
+DEFAULT_DATASET = str(WORKSPACE_ROOT / "RejectFinanceBill2024.xlsx")
 
 # Persistent uploads directory — files must survive beyond the request so
 # long-running endpoints like /drift can re-open them.
-UPLOADS_DIR = Path(__file__).parent.parent.parent / "files" / "uploads"
+UPLOADS_DIR = WORKSPACE_ROOT / "files" / "uploads"
 UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+
+# Opaque export token → exact files created by that export operation.
+exports_registry: dict[str, dict] = {}
 
 
 # ─── Pydantic Models ─────────────────────────────────────────────────────────
@@ -131,8 +159,9 @@ class AnalysisSummary(BaseModel):
     density: float
     components: int
     reciprocity: Optional[float] = None
-    edge_types: dict = {}
-    top_influencers: list = []
+    edge_types: dict = Field(default_factory=dict)
+    top_influencers: list = Field(default_factory=list)
+    cache_hit: bool = False
 
 
 class FeatureResponse(BaseModel):
@@ -145,6 +174,7 @@ class FeatureResponse(BaseModel):
 class SentimentResponse(BaseModel):
     dataset_id: str
     silhouette: Optional[float]
+    silhouette_sample_size: int
     polarization_index: float
     centroid_distance: float
     clusters: dict  # {"Neg": count, "Neu": count, "Pos": count}
@@ -161,7 +191,14 @@ class DisinfoResponse(BaseModel):
 class CensorshipResponse(BaseModel):
     dataset_id: str
     fiedler_value: float
-    cvi: float
+    cvi: Optional[float]
+    component_count: int
+    largest_component_nodes: int
+    largest_component_share: float
+    largest_component_fiedler: Optional[float]
+    largest_component_normalized_fiedler: Optional[float]
+    largest_component_max_betweenness: Optional[float]
+    component_cvi: Optional[float]
     structural_holes: list
 
 
@@ -178,41 +215,232 @@ class CompareRequest(BaseModel):
     dataset_id_2: str
 
 
+class LLMChatRequest(BaseModel):
+    user_question: str = Field(min_length=1, max_length=4000)
+    context: str = Field(default="", max_length=30000)
+
+
+class CommercialRequest(BaseModel):
+    dataset_id: str = "default"
+    base_keywords: str = Field(default="", max_length=4000)
+    use_ai: bool = True
+
+
 # ─── Helpers ─────────────────────────────────────────────────────────────────
 
-def _run_full_analysis(filepath: str, dataset_id: str) -> dict:
-    """Run the full analysis pipeline on a file. Returns state dict."""
-    G, meta = load_nodexl(filepath)
+def _normalise_dataset_id(filename: str) -> str:
+    """Create a filesystem-safe, stable dataset identifier from an upload name."""
+    identifier = re.sub(r"[^A-Za-z0-9._-]+", "-", Path(filename).stem).strip(".-")
+    if not identifier:
+        raise HTTPException(400, "The uploaded filename does not contain a valid dataset name.")
+    return identifier[:120]
 
+
+def _hash_file(filepath: Path) -> str:
+    digest = hashlib.sha256()
+    with filepath.open("rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _censorship_metrics(ca: CensorshipAnalyzer) -> dict:
+    """Return versioned whole-network and giant-component connectivity values."""
+    ca.censorship_vulnerability_index()
+    return {
+        "fiedler_value": ca._compute_fiedler(),
+        "cvi": ca.cvi,
+        "network_components": ca.component_count,
+        "largest_component_nodes": ca.largest_component_nodes,
+        "largest_component_share": ca.largest_component_share,
+        "largest_component_fiedler": ca.largest_component_fiedler,
+        "largest_component_normalized_fiedler": ca.largest_component_normalized_fiedler,
+        "largest_component_max_betweenness": ca.largest_component_max_betweenness,
+        "component_cvi": ca.component_cvi,
+        "censorship_method_version": CensorshipAnalyzer.METHOD_VERSION,
+    }
+
+
+def _analysis_metric_context(state: dict) -> str:
+    """Canonical Redis-restored metrics for LLM prompts."""
+    ca = state["ca"]
+    sa = state["sa"]
+    da = state["da"]
+    risk_counts = {
+        label: sum(1 for value in da.risk_labels.values() if value == label)
+        for label in ("clean", "suspicious", "likely_disinfo")
+    }
+    largest_fiedler = (
+        f"{ca.largest_component_fiedler:.8f}"
+        if ca.largest_component_fiedler is not None else "N/A"
+    )
+    component_cvi = (
+        f"{ca.component_cvi:.8f}" if ca.component_cvi is not None else "N/A"
+    )
+    return (
+        "Persisted SIMElab network metrics (treat as ground truth):\n"
+        f"- Accounts: {state['G'].number_of_nodes()}; connections: {state['G'].number_of_edges()}\n"
+        f"- Sentiment clusters: Pos {sa.cluster_sizes.get('Pos', 0)}, "
+        f"Neu {sa.cluster_sizes.get('Neu', 0)}, Neg {sa.cluster_sizes.get('Neg', 0)}; "
+        f"polarization {sa.polarization_index():.6f}\n"
+        f"- Whole network: {ca.component_count} components, Fiedler λ2 "
+        f"{ca._compute_fiedler():.8f}, CVI "
+        f"{ca.cvi if ca.cvi is not None else 'N/A (disconnected)'}\n"
+        f"- Giant component: {ca.largest_component_nodes} accounts "
+        f"({ca.largest_component_share:.2%}), Fiedler λ2 "
+        f"{largest_fiedler}, component CVI {component_cvi}\n"
+        f"- Disinformation risk: {risk_counts['likely_disinfo']} likely, "
+        f"{risk_counts['suspicious']} suspicious, {risk_counts['clean']} clean"
+    )
+
+
+def _resolve_public_image(image_path: str) -> Path:
+    """Resolve an image only when it stays inside an explicitly public directory."""
+    if not image_path or Path(image_path).is_absolute():
+        raise HTTPException(404, "Image not found")
+    requested = (WORKSPACE_ROOT / image_path).resolve()
+    allowed_suffixes = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"}
+    if requested.suffix.lower() not in allowed_suffixes:
+        raise HTTPException(404, "Image not found")
+    if not any(requested.is_relative_to(root.resolve()) for root in PUBLIC_IMAGE_ROOTS):
+        raise HTTPException(404, "Image not found")
+    if not requested.is_file():
+        raise HTTPException(404, "Image not found")
+    return requested
+
+
+def _llm_settings() -> tuple[str, str, str, str]:
+    """Return provider, key, model and endpoint without exposing the key to clients."""
+    providers = (
+        ("tokenrouter", "TOKENROUTER_API_KEY", "MiniMax-M3", "https://api.tokenrouter.com/v1/chat/completions"),
+        ("nvidia-nim", "NVIDIA_API_KEY", "meta/llama-3.1-70b-instruct", "https://integrate.api.nvidia.com/v1/chat/completions"),
+        ("deepseek", "DEEPSEEK_API_KEY", "deepseek-chat", "https://api.deepseek.com/v1/chat/completions"),
+    )
+    for provider, env_name, model, endpoint in providers:
+        key = read_env_key(env_name)
+        if key:
+            return provider, key, model, endpoint
+    return "deepseek", "", "deepseek-chat", "https://api.deepseek.com/v1/chat/completions"
+
+
+def _call_llm(user_question: str, context: str) -> str:
+    provider, key, model, endpoint = _llm_settings()
+    if not key:
+        raise HTTPException(503, "Server-side LLM is not configured.")
+    system_prompt = (
+        "You are a social network analysis expert at SIMElab Africa, USIU-Africa. "
+        "Be concise, data-driven, and professional. Treat supplied network metrics as ground truth "
+        "and cite specific numbers when available.\n\nDataset context:\n" + context
+    )
+    payload = json.dumps({
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_question},
+        ],
+        "temperature": 0.3,
+        "max_tokens": 1500,
+        "stream": False,
+    }).encode("utf-8")
+    request = urllib.request.Request(
+        endpoint,
+        data=payload,
+        headers={"Content-Type": "application/json", "Authorization": f"Bearer {key}"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=90) as response:
+            result = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        logger.warning("%s LLM request failed with HTTP %s", provider, exc.code)
+        raise HTTPException(502, "The configured LLM provider rejected the request.") from exc
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+        logger.warning("%s LLM request failed: %s", provider, type(exc).__name__)
+        raise HTTPException(502, "The configured LLM provider is unavailable.") from exc
+    content = result.get("choices", [{}])[0].get("message", {}).get("content", "")
+    if not isinstance(content, str) or not content.strip():
+        raise HTTPException(502, "The configured LLM provider returned an empty response.")
+    return content
+
+def _run_full_analysis(filepath: str, dataset_id: str, source_hash: Optional[str] = None) -> dict:
+    """Run the full analysis pipeline on a file. Returns state dict."""
+    timings = {}
+    started = time.perf_counter()
+    G, meta = load_nodexl(filepath)
+    timings["load"] = time.perf_counter() - started
+    meta["source_hash"] = source_hash or _hash_file(Path(filepath))
+
+    started = time.perf_counter()
     fe = FeatureEngineer(G)
     fe.build_matrix()
+    fe_dict = fe.to_dict()
+    for node, features in fe_dict.items():
+        attrs = G.nodes[node]
+        attrs["degree"] = G.degree(node)
+        attrs["in_degree"] = G.in_degree(node) if G.is_directed() else G.degree(node)
+        attrs["out_degree"] = G.out_degree(node) if G.is_directed() else G.degree(node)
+        attrs["betweenness"] = features["betweenness_centrality"]
+        attrs["closeness"] = features["closeness_centrality"]
+        attrs["eigenvector"] = features["eigenvector_centrality"]
+        attrs["pagerank"] = features["pagerank"]
+        attrs["clustering_coefficient"] = features["clustering_coefficient"]
+    timings["features"] = time.perf_counter() - started
 
+    started = time.perf_counter()
     sa = SentimentAnalyzer(fe)
     sa.fit()
+    for node, label in sa.labels.items():
+        G.nodes[node]["sentiment"] = label
+    for node, cluster_id in zip(sa.nodes, sa.cluster_ids):
+        G.nodes[node]["cluster"] = int(cluster_id)
+    timings["sentiment"] = time.perf_counter() - started
 
+    meta.setdefault("overall_metrics", {})
+    meta["overall_metrics"].update({
+        "sentiment_silhouette": sa.silhouette,
+        "sentiment_silhouette_sample_size": sa.silhouette_sample_size,
+        "polarization_index": sa.polarization_index(),
+        "sentiment_centroid_distance": sa.centroid_distance(),
+        "sentiment_method_version": SentimentAnalyzer.METHOD_VERSION,
+    })
+
+    started = time.perf_counter()
     da = DisinformationAnalyzer(G, fe)
     da.score_all()
+    timings["disinformation"] = time.perf_counter() - started
 
-    ca = CensorshipAnalyzer(G)
+    started = time.perf_counter()
+    # Betweenness is already the second feature dimension. Reuse it instead of
+    # running the same sampled all-pairs computation a second time.
+    fe_nodes = fe.get_nodes()
+    betweenness = {
+        node: float(fe._matrix[index, BETWEENNESS])
+        for index, node in enumerate(fe_nodes)
+    }
+    ca = CensorshipAnalyzer(G, betweenness=betweenness)
     ca.find_structural_holes(k=20)
     ca.censorship_vulnerability_index()
+    timings["censorship"] = time.perf_counter() - started
 
     # Hashtags (non-critical, may fail if no text)
-    try:
-        import pandas as pd
-        edges_df = pd.read_excel(filepath, sheet_name="Edges", header=1)
-    except Exception:
-        edges_df = None
+    # The loader already parsed the Edges sheet. Reusing it avoids a second
+    # complete XLSX scan on every upload.
+    edges_df = meta.pop("_edges_df", None)
 
+    started = time.perf_counter()
     from simelab.hashtag import HashtagAnalyzer
     ha = HashtagAnalyzer(G, edges_df)
     ha.detect_lifecycle()
     ha.score_hashtags()
+    timings["hashtags"] = time.perf_counter() - started
 
-    # Store Fiedler value and CVI in overall_metrics for direct database loading later
+    # Store both whole-network and giant-component metrics so Redis restoration
+    # preserves the documented interpretation without spectral recomputation.
     meta.setdefault("overall_metrics", {})
-    meta["overall_metrics"]["fiedler_value"] = ca._compute_fiedler()
-    meta["overall_metrics"]["cvi"] = ca.cvi
+    meta["overall_metrics"].update(_censorship_metrics(ca))
+    meta["analysis_timings_ms"] = {
+        stage: round(seconds * 1000, 1) for stage, seconds in timings.items()
+    }
 
     state = {
         "G": G,
@@ -223,19 +451,48 @@ def _run_full_analysis(filepath: str, dataset_id: str) -> dict:
         "ca": ca,
         "ha": ha,
         "filepath": filepath,
+        "_feature_dict": fe_dict,
     }
     analyses[dataset_id] = state
 
-    # Persist to SQLite so results survive a server restart
-    _save_analysis_to_sqlite(dataset_id, state)
+    # Redis is a restore cache only. Uploads always execute this full pipeline.
+    _save_analysis_to_cache(dataset_id, state)
 
     return state
 
 
-def _load_analysis_from_db(dataset_id: str) -> Optional[dict]:
-    """Reconstruct the analysis state dictionary directly from SQLite database."""
+def _build_analysis_summary(dataset_id: str, state: dict, cache_hit: bool = False) -> AnalysisSummary:
+    G = state["G"]
+    meta = state["meta"]
+    fe = state["fe"]
+    gs = meta.get("graph_stats", {})
+    top_inf = fe.get_top(INFLUENCE, k=10)
+    top_list = [
+        {
+            "username": node,
+            "display_name": G.nodes[node].get("display_name", ""),
+            "influence_score": round(score, 6),
+            "followers": G.nodes[node].get("followers", 0),
+        }
+        for node, score in top_inf
+    ]
+    return AnalysisSummary(
+        dataset_id=dataset_id,
+        nodes=G.number_of_nodes(),
+        edges=G.number_of_edges(),
+        density=round(gs.get("density", 0), 6),
+        components=gs.get("connected_components", 0),
+        reciprocity=round(gs.get("reciprocity", 0), 6) if gs.get("reciprocity") else None,
+        edge_types=gs.get("edge_types", {}),
+        top_influencers=top_list,
+        cache_hit=cache_hit,
+    )
+
+
+def _load_analysis_from_cache(dataset_id: str) -> Optional[dict]:
+    """Reconstruct the analysis state dictionary from a Redis result payload."""
     try:
-        from simelab.database import (
+        from simelab.redis_cache import (
             get_dataset_meta, load_vertices, load_edges,
             load_disinfo_scores, load_hashtags, load_structural_holes
         )
@@ -247,7 +504,8 @@ def _load_analysis_from_db(dataset_id: str) -> Optional[dict]:
         if not meta_row:
             return None
 
-        # Load rows from SQLite
+        # Redis keeps one compressed JSON blob; these accessors share one
+        # decompressed in-process payload during reconstruction.
         vertices_rows = load_vertices(dataset_id)
         edges_rows = load_edges(dataset_id)
         disinfo_rows = load_disinfo_scores(dataset_id)
@@ -307,9 +565,9 @@ def _load_analysis_from_db(dataset_id: str) -> Optional[dict]:
                 attrs["topic"] = v["topic"]
             if v["hashtags_json"]:
                 try:
-                    attrs["hashtags"] = json.loads(v["hashtags_json"])
+                    attrs["hashtags"] = json.loads(v["hashtags_json"]) or []
                 except Exception:
-                    pass
+                    attrs["hashtags"] = []
             G.add_node(node_id, **attrs)
 
         for e in edges_rows:
@@ -321,6 +579,23 @@ def _load_analysis_from_db(dataset_id: str) -> Optional[dict]:
                 edge_type=e["relation"],
                 Relationship=e["relation"],
             )
+
+        # Older persisted analyses may contain NULL centrality values. NetworkX
+        # still knows the structural degrees after edges are restored, so fill
+        # those values before any sorting or arithmetic happens.
+        for node, attrs in G.nodes(data=True):
+            in_degree = attrs.get("in_degree")
+            out_degree = attrs.get("out_degree")
+            attrs["in_degree"] = int(in_degree) if in_degree is not None else G.in_degree(node)
+            attrs["out_degree"] = int(out_degree) if out_degree is not None else G.out_degree(node)
+            degree = attrs.get("degree")
+            attrs["degree"] = int(degree) if degree is not None else attrs["in_degree"] + attrs["out_degree"]
+            for metric in (
+                "betweenness", "closeness", "eigenvector", "pagerank",
+                "clustering_coefficient", "followers", "layout_x", "layout_y", "bot_score",
+            ):
+                if attrs.get(metric) is None:
+                    attrs[metric] = 0.0
 
         # 3. Reconstruct Mock classes
         from simelab.features import FEATURE_NAMES
@@ -393,7 +668,7 @@ def _load_analysis_from_db(dataset_id: str) -> Optional[dict]:
         fe = MockFeatureEngineer(G, vertices_rows)
 
         class MockSentimentAnalyzer:
-            def __init__(self, fe, vertices_rows):
+            def __init__(self, fe, vertices_rows, persisted_metrics):
                 self.fe = fe
                 self.nodes = fe.get_nodes()
                 self.n = len(self.nodes)
@@ -414,25 +689,51 @@ def _load_analysis_from_db(dataset_id: str) -> Optional[dict]:
                     mask = self.cluster_ids == cid
                     if mask.any():
                         self.centroids[cid] = self.X_norm[mask].mean(axis=0)
-                from sklearn.metrics import silhouette_score
-                if len(set(self.cluster_ids)) > 1:
-                    try:
-                        self.silhouette = float(silhouette_score(self.X_norm, self.cluster_ids))
-                    except Exception:
-                        self.silhouette = None
-                else:
-                    self.silhouette = None
+                # Silhouette scoring is quadratic in the number of samples.
+                # Restore the value saved by the original analysis rather than
+                # silently recomputing it whenever the server restarts.
+                self.silhouette = persisted_metrics.get("sentiment_silhouette")
+                self.silhouette_sample_size = persisted_metrics.get(
+                    "sentiment_silhouette_sample_size", 0
+                )
 
             def polarization_index(self) -> float:
-                extreme = self.cluster_sizes.get("Pos", 0) + self.cluster_sizes.get("Neg", 0)
-                return extreme / max(self.n, 1)
+                pos = self.cluster_sizes.get("Pos", 0)
+                neg = self.cluster_sizes.get("Neg", 0)
+                return (2.0 * min(pos, neg)) / max(self.n, 1)
 
             def centroid_distance(self) -> float:
                 pos_cid = 0
                 neg_cid = 2
-                return float(np.linalg.norm(self.centroids[pos_cid] - self.centroids[neg_cid]))
+                raw_distance = np.linalg.norm(self.centroids[pos_cid] - self.centroids[neg_cid])
+                return float(raw_distance / np.sqrt(self.centroids.shape[1]))
 
-        sa = MockSentimentAnalyzer(fe, vertices_rows)
+        persisted_metrics = meta.setdefault("overall_metrics", {})
+        if persisted_metrics.get("sentiment_method_version") != SentimentAnalyzer.METHOD_VERSION:
+            # Upgrade only the inexpensive 9-D clustering layer. The graph,
+            # centralities, disinformation, censorship, and hashtag analyses
+            # remain loaded from Redis.
+            sa = SentimentAnalyzer(fe)
+            sa.fit()
+            for node, label in sa.labels.items():
+                G.nodes[node]["sentiment"] = label
+            persisted_metrics.update({
+                "sentiment_silhouette": sa.silhouette,
+                "sentiment_silhouette_sample_size": sa.silhouette_sample_size,
+                "polarization_index": sa.polarization_index(),
+                "sentiment_centroid_distance": sa.centroid_distance(),
+                "sentiment_method_version": SentimentAnalyzer.METHOD_VERSION,
+            })
+            update_sentiment_analysis(dataset_id, sa.labels, persisted_metrics)
+        else:
+            sa = MockSentimentAnalyzer(fe, vertices_rows, persisted_metrics)
+
+        # Keep the graph used by overview/analysis endpoints synchronized with
+        # the authoritative sentiment analyzer restored from Redis.
+        for node, label in sa.labels.items():
+            G.nodes[node]["sentiment"] = label
+        for node, cluster_id in zip(sa.nodes, sa.cluster_ids):
+            G.nodes[node]["cluster"] = int(cluster_id)
 
         class MockDisinformationAnalyzer:
             def __init__(self, G, disinfo_rows):
@@ -453,10 +754,21 @@ def _load_analysis_from_db(dataset_id: str) -> Optional[dict]:
         da = MockDisinformationAnalyzer(G, disinfo_rows)
 
         class MockCensorshipAnalyzer:
-            def __init__(self, G, holes_rows, fiedler_val, cvi_val):
+            def __init__(self, G, holes_rows, metrics):
                 self.G = G
-                self.fiedler_value = fiedler_val
-                self.cvi = cvi_val
+                self.fiedler_value = metrics.get("fiedler_value", 0.0)
+                self.cvi = metrics.get("cvi")
+                self.component_count = metrics.get("network_components", 1)
+                self.largest_component_nodes = metrics.get("largest_component_nodes", len(G))
+                self.largest_component_share = metrics.get("largest_component_share", 1.0)
+                self.largest_component_fiedler = metrics.get("largest_component_fiedler")
+                self.largest_component_normalized_fiedler = metrics.get(
+                    "largest_component_normalized_fiedler"
+                )
+                self.largest_component_max_betweenness = metrics.get(
+                    "largest_component_max_betweenness"
+                )
+                self.component_cvi = metrics.get("component_cvi")
                 self.betweenness = {node: G.nodes[node].get("betweenness", 0.0) for node in G.nodes()}
                 self.structural_holes = []
                 for row in holes_rows:
@@ -488,9 +800,20 @@ def _load_analysis_from_db(dataset_id: str) -> Optional[dict]:
                     total_deg = self.G.degree(node)
                 return cb * np.log(total_deg + 1)
 
-        fiedler_val = meta.get("overall_metrics", {}).get("fiedler_value", 0.05)
-        cvi_val = meta.get("overall_metrics", {}).get("cvi", 10.0)
-        ca = MockCensorshipAnalyzer(G, holes_rows, fiedler_val, cvi_val)
+        censorship_upgraded = (
+            persisted_metrics.get("censorship_method_version")
+            != CensorshipAnalyzer.METHOD_VERSION
+        )
+        if censorship_upgraded:
+            betweenness = {
+                node: float(fe._matrix[index, BETWEENNESS])
+                for index, node in enumerate(fe.get_nodes())
+            }
+            ca = CensorshipAnalyzer(G, betweenness=betweenness)
+            ca.find_structural_holes(k=20)
+            persisted_metrics.update(_censorship_metrics(ca))
+        else:
+            ca = MockCensorshipAnalyzer(G, holes_rows, persisted_metrics)
 
         class MockHashtagAnalyzer:
             def __init__(self, hashtags_rows):
@@ -526,15 +849,17 @@ def _load_analysis_from_db(dataset_id: str) -> Optional[dict]:
             "filepath": meta_row["filepath"],
         }
         analyses[dataset_id] = state
+        if censorship_upgraded:
+            _save_analysis_to_cache(dataset_id, state)
         return state
 
     except Exception as ex:
-        print(f"Error reconstructing analysis from SQLite for '{dataset_id}': {ex}")
+        print(f"Error reconstructing analysis from Redis for '{dataset_id}': {ex}")
         return None
 
 
-def _save_analysis_to_sqlite(dataset_id: str, state: dict):
-    """Serialize analysis state to the SQLite database."""
+def _save_analysis_to_cache(dataset_id: str, state: dict):
+    """Serialize and compress a completed analysis into Redis."""
     try:
         G = state["G"]
         meta = state["meta"]
@@ -545,7 +870,11 @@ def _save_analysis_to_sqlite(dataset_id: str, state: dict):
         ha = state["ha"]
 
         # Pre-compute feature dict once
-        fe_dict = fe.to_dict()
+        fe_dict = state.pop("_feature_dict", None) or fe.to_dict()
+        cluster_by_node = {
+            node: int(cluster_id)
+            for node, cluster_id in zip(sa.nodes, sa.cluster_ids)
+        }
 
         # Build serializable vertex list
         vertices_serial = []
@@ -561,8 +890,12 @@ def _save_analysis_to_sqlite(dataset_id: str, state: dict):
                         "closeness", "eigenvector", "pagerank", "clustering_coefficient",
                         "followers", "layout_x", "layout_y"):
                 v[key] = attrs.get(key)
+            for key in ("tweet_text", "platform", "topic", "hashtags", "bot_score"):
+                v[key] = attrs.get(key)
+            v["is_bot"] = bool(attrs.get("is_bot", False))
             # Sentiment label
             v["sentiment"] = sa.labels.get(node, "unknown")
+            v["cluster"] = cluster_by_node.get(node)
             # Features from the feature engineer (no node_features attr — use to_dict)
             v["features"] = fe_dict.get(node, {})
             vertices_serial.append(v)
@@ -628,22 +961,24 @@ def _save_analysis_to_sqlite(dataset_id: str, state: dict):
             "structural_holes": holes_serial,
         }
 
-        save_full_analysis(dataset_id, meta, serializable)
-        print(f"  [db] Saved analysis '{dataset_id}' to simelab.db ({len(vertices_serial)} vertices, {len(edges_serial)} edges)")
+        if save_full_analysis(dataset_id, meta, serializable):
+            print(f"  [redis] Cached analysis '{dataset_id}' ({len(vertices_serial)} vertices, {len(edges_serial)} edges)")
+        else:
+            print(f"  [redis] Cache unavailable; '{dataset_id}' remains available in memory")
     except Exception as e:
-        print(f"  [db] Warning: could not save '{dataset_id}' to SQLite: {e}")
+        print(f"  [redis] Warning: could not cache '{dataset_id}': {e}")
 
 
 def _get_analysis(dataset_id: str) -> dict:
     """Get cached analysis or raise 404."""
     if dataset_id not in analyses:
-        # Try loading directly from SQLite
-        state = _load_analysis_from_db(dataset_id)
+        # A reload normally hits memory; a Python restart restores from Redis.
+        state = _load_analysis_from_cache(dataset_id)
         if state:
             return state
 
-        # Fallback to recovering from Excel/CSV file if not in DB (or DB load failed)
-        from simelab.database import get_stored_filepath
+        # If Redis was flushed but still has metadata during a transient error,
+        # the stored upload remains a safe last-resort recovery source.
         fp = get_stored_filepath(dataset_id)
         if fp and os.path.exists(fp):
             print(f"Lazy-loading dataset '{dataset_id}' from file {fp}...")
@@ -660,15 +995,21 @@ def _get_analysis(dataset_id: str) -> dict:
 @app.get("/api/simelab/health")
 async def health():
     """Health check + loaded datasets."""
-    # Also list datasets stored in SQLite for recovery awareness
-    db_datasets = list_datasets()
-    db_ids = [d["id"] for d in db_datasets]
+    cached_ids = [dataset["id"] for dataset in list_datasets()]
     return {
         "status": "ok",
         "loaded_datasets": list(analyses.keys()),
-        "db_datasets": db_ids,
+        "cached_datasets": cached_ids,
+        "redis": cache_status(),
         "default_dataset": os.path.basename(DEFAULT_DATASET),
     }
+
+
+@app.get("/api/simelab/images/{image_path:path}")
+async def get_public_image(image_path: str):
+    """Serve dataset profile images without exposing the rest of the workspace."""
+    filepath = _resolve_public_image(image_path)
+    return FileResponse(filepath)
 
 
 @app.post("/api/simelab/upload", response_model=AnalysisSummary)
@@ -681,45 +1022,39 @@ async def upload_file(file: UploadFile = File(...)):
     if ext not in (".xlsx", ".csv"):
         raise HTTPException(400, f"Unsupported format: {ext}. Use .xlsx or .csv")
 
-    dataset_id = Path(file.filename).stem
-    # Save permanently so endpoints like /drift can re-read the file later
+    dataset_id = _normalise_dataset_id(file.filename)
+    # Stage the upload safely. Every accepted upload is recomputed, even when
+    # its filename and content match a prior run; Redis is restore-only.
     dest = UPLOADS_DIR / f"{dataset_id}{ext}"
+    staged = UPLOADS_DIR / f".{dataset_id}.{secrets.token_hex(8)}.part"
     try:
-        with open(dest, "wb") as f:
-            shutil.copyfileobj(file.file, f)
+        total = 0
+        digest = hashlib.sha256()
+        with open(staged, "wb") as f:
+            while chunk := await file.read(1024 * 1024):
+                total += len(chunk)
+                if total > MAX_UPLOAD_BYTES:
+                    raise HTTPException(
+                        413,
+                        f"Upload exceeds the {MAX_UPLOAD_BYTES // (1024 * 1024)} MB limit.",
+                    )
+                digest.update(chunk)
+                f.write(chunk)
+        source_hash = digest.hexdigest()
 
-        state = _run_full_analysis(str(dest), dataset_id)
+        os.replace(staged, dest)
+        state = await asyncio.to_thread(_run_full_analysis, str(dest), dataset_id, source_hash)
+        return _build_analysis_summary(dataset_id, state)
 
-        # Build summary
-        G = state["G"]
-        meta = state["meta"]
-        fe = state["fe"]
-        gs = meta.get("graph_stats", {})
-
-        top_inf = fe.get_top(INFLUENCE, k=10)
-        top_list = [
-            {
-                "username": node,
-                "display_name": G.nodes[node].get("display_name", ""),
-                "influence_score": round(score, 6),
-                "followers": G.nodes[node].get("followers", 0),
-            }
-            for node, score in top_inf
-        ]
-
-        return AnalysisSummary(
-            dataset_id=dataset_id,
-            nodes=G.number_of_nodes(),
-            edges=G.number_of_edges(),
-            density=round(gs.get("density", 0), 6),
-            components=gs.get("connected_components", 0),
-            reciprocity=round(gs.get("reciprocity", 0), 6) if gs.get("reciprocity") else None,
-            edge_types=gs.get("edge_types", {}),
-            top_influencers=top_list,
-        )
-
-    except Exception as e:
-        raise HTTPException(500, f"Analysis failed: {str(e)}")
+    except HTTPException:
+        staged.unlink(missing_ok=True)
+        raise
+    except Exception as exc:
+        staged.unlink(missing_ok=True)
+        logger.exception("Analysis failed for uploaded dataset %s", dataset_id)
+        raise HTTPException(500, "Analysis failed. Check the server logs for details.") from exc
+    finally:
+        await file.close()
 
 
 def compute_ai_insights(G, sa, da, ha, overall_metrics=None) -> dict:
@@ -742,7 +1077,7 @@ def compute_ai_insights(G, sa, da, ha, overall_metrics=None) -> dict:
     hashtag_counts = Counter()
     hashtag_sentiments = {}
     for n in G.nodes():
-        node_tags = G.nodes[n].get("hashtags", [])
+        node_tags = G.nodes[n].get("hashtags") or []
         if isinstance(node_tags, str):
             try:
                 node_tags = json.loads(node_tags)
@@ -866,9 +1201,9 @@ def compute_ai_insights(G, sa, da, ha, overall_metrics=None) -> dict:
         })
 
     # 7. Summary
-    top_node = sorted(G.nodes(), key=lambda x: G.nodes[x].get("degree", 0), reverse=True)
+    top_node = sorted(G.nodes(), key=lambda x: G.nodes[x].get("degree") or 0, reverse=True)
     top_node_label = G.nodes[top_node[0]].get("display_name", top_node[0]) if top_node else None
-    top_node_deg = G.nodes[top_node[0]].get("degree", 0) if top_node else 0
+    top_node_deg = (G.nodes[top_node[0]].get("degree") or 0) if top_node else 0
     pos_pct = int(round((sum(1 for n in G.nodes() if G.nodes[n].get("sentiment") == "Pos") / max(total_nodes, 1)) * 100))
     theme_str = ", ".join(n["theme"] for n in key_narratives[:3])
     
@@ -1032,7 +1367,8 @@ async def get_sentiment(dataset_id: str = Query("default")):
 
     return {
         "dataset_id": dataset_id,
-        "silhouette": round(sa.silhouette, 6) if sa.silhouette else None,
+        "silhouette": round(sa.silhouette, 6) if sa.silhouette is not None else None,
+        "silhouette_sample_size": sa.silhouette_sample_size,
         "polarization_index": round(sa.polarization_index(), 4),
         "centroid_distance": round(sa.centroid_distance(), 4),
         "clusters": {
@@ -1108,7 +1444,25 @@ async def get_censorship(dataset_id: str = Query("default")):
     return {
         "dataset_id": dataset_id,
         "fiedler_value": round(ca._compute_fiedler(), 6),
-        "cvi": round(ca.cvi, 4) if ca.cvi else None,
+        "cvi": round(ca.cvi, 8) if ca.cvi is not None else None,
+        "component_count": ca.component_count,
+        "largest_component_nodes": ca.largest_component_nodes,
+        "largest_component_share": round(ca.largest_component_share, 8),
+        "largest_component_fiedler": (
+            round(ca.largest_component_fiedler, 8)
+            if ca.largest_component_fiedler is not None else None
+        ),
+        "largest_component_normalized_fiedler": (
+            round(ca.largest_component_normalized_fiedler, 8)
+            if ca.largest_component_normalized_fiedler is not None else None
+        ),
+        "largest_component_max_betweenness": (
+            round(ca.largest_component_max_betweenness, 10)
+            if ca.largest_component_max_betweenness is not None else None
+        ),
+        "component_cvi": (
+            round(ca.component_cvi, 8) if ca.component_cvi is not None else None
+        ),
         "structural_holes": holes,
     }
 
@@ -1139,59 +1493,72 @@ async def get_hashtags(dataset_id: str = Query("default")):
 
 @app.get("/api/simelab/llm-config")
 async def get_llm_config():
-    """Get backend-configured LLM provider and key from environment."""
-    nv_key = read_env_key("NVIDIA_API_KEY")
-    ds_key = read_env_key("DEEPSEEK_API_KEY")
-    tr_key = read_env_key("TOKENROUTER_API_KEY")
-    if tr_key:
-        return {"provider": "tokenrouter", "apiKey": tr_key}
-    elif nv_key:
-        return {"provider": "nvidia-nim", "apiKey": nv_key}
-    elif ds_key:
-        return {"provider": "deepseek", "apiKey": ds_key}
-    return {"provider": "deepseek", "apiKey": ""}
+    """Report server-side LLM availability without disclosing credentials."""
+    provider, key, model, _endpoint = _llm_settings()
+    return {"provider": provider, "configured": bool(key), "model": model}
+
+
+@app.post("/api/simelab/llm/chat")
+async def llm_chat(req: LLMChatRequest):
+    """Proxy analyst chat through the backend so API keys never reach browsers."""
+    content = await asyncio.to_thread(_call_llm, req.user_question.strip(), req.context)
+    return {"content": content}
 
 
 @app.get("/api/simelab/drift")
-async def get_semantic_drift(dataset_id: str = Query("default"), api_key: str = Query("")):
+async def get_semantic_drift(dataset_id: str = Query("default")):
     """Run semantic drift and co-optation analysis on tweet text using LLM."""
-    env_key = read_env_key("TOKENROUTER_API_KEY") or read_env_key("NVIDIA_API_KEY") or read_env_key("DEEPSEEK_API_KEY")
-    key_to_use = api_key or env_key
+    _provider, key_to_use, _model, _endpoint = _llm_settings()
+    # Drift can be configured independently because the shared parent .env may
+    # contain a higher-priority provider (for example NVIDIA) for other flows.
+    deepseek_key = read_env_key("DEEPSEEK_API_KEY")
+    if deepseek_key:
+        key_to_use = deepseek_key
     if not key_to_use:
-        raise HTTPException(400, "API key is required. Set it in settings or in the backend .env file.")
+        raise HTTPException(503, "Server-side LLM is not configured.")
 
     state = _get_analysis(dataset_id)
     filepath = state["filepath"]
+    network_context = _analysis_metric_context(state)
 
     try:
         analyzer = SemanticDriftAnalyzer(filepath)
-        result = analyzer.analyze(api_key=key_to_use)
+        result = await asyncio.to_thread(
+            analyzer.analyze,
+            api_key=key_to_use,
+            network_context=network_context,
+        )
         return result
-    except Exception as e:
-        raise HTTPException(500, f"Semantic drift analysis failed: {str(e)}")
-
-
-class CommercialRequest(BaseModel):
-    dataset_id: str = "default"
-    api_key: str = ""
-    base_keywords: str = ""
-    use_ai: bool = True
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Semantic drift analysis failed for %s", dataset_id)
+        raise HTTPException(500, "Semantic drift analysis failed. Check the server logs for details.") from exc
 
 @app.post("/api/simelab/commercial")
 async def get_commercial(req: CommercialRequest):
     """Run commercial intent and co-optation analysis."""
-    env_key = read_env_key("TOKENROUTER_API_KEY") or read_env_key("NVIDIA_API_KEY") or read_env_key("DEEPSEEK_API_KEY")
-    key_to_use = req.api_key if req.api_key else (env_key if req.use_ai else "")
+    _provider, env_key, _model, _endpoint = _llm_settings()
+    if req.use_ai and not env_key:
+        raise HTTPException(503, "Server-side LLM is not configured.")
+    key_to_use = env_key if req.use_ai else ""
 
     state = _get_analysis(req.dataset_id)
     filepath = state["filepath"]
 
     try:
         analyzer = CommercialAnalyzer(filepath)
-        result = analyzer.analyze(api_key=key_to_use, base_keywords=req.base_keywords)
+        result = await asyncio.to_thread(
+            analyzer.analyze,
+            api_key=key_to_use,
+            base_keywords=req.base_keywords,
+        )
         return result
-    except Exception as e:
-        raise HTTPException(500, f"Commercial analysis failed: {str(e)}")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Commercial analysis failed for %s", req.dataset_id)
+        raise HTTPException(500, "Commercial analysis failed. Check the server logs for details.") from exc
 
 
 @app.post("/api/simelab/compare")
@@ -1257,27 +1624,42 @@ async def export_results(dataset_id: str = Query("default"), format: str = Query
     ca = state["ca"]
     ha = state["ha"]
 
+    if format not in {"csv", "xlsx"}:
+        raise HTTPException(400, "Unsupported export format.")
     export_dir = tempfile.mkdtemp(prefix="simelab_export_")
     em = ExportManager(output_dir=export_dir)
 
     try:
-        results = em.export_all(G, fe, sa, da, ha, ca)
+        results = await asyncio.to_thread(em.export_all, G, fe, sa, da, ha, ca)
+        token = secrets.token_urlsafe(24)
+        files = {name: str(Path(path).resolve()) for name, path in results.items()}
+        exports_registry[token] = {"files": files, "created": time.time()}
         return {
             "dataset_id": dataset_id,
-            "files": {name: os.path.basename(path) for name, path in results.items()},
-            "export_dir": export_dir,
+            "files": {
+                name: f"/api/simelab/download/{token}/{Path(path).name}"
+                for name, path in results.items()
+            },
         }
-    except Exception as e:
-        raise HTTPException(500, f"Export failed: {str(e)}")
+    except Exception as exc:
+        shutil.rmtree(export_dir, ignore_errors=True)
+        logger.exception("Export failed for %s", dataset_id)
+        raise HTTPException(500, "Export failed. Check the server logs for details.") from exc
 
 
-@app.get("/api/simelab/download/{filename}")
-async def download_file(filename: str, export_dir: str = Query("")):
-    """Download an exported file."""
-    filepath = os.path.join(export_dir, filename)
-    if not os.path.exists(filepath):
+@app.get("/api/simelab/download/{token}/{filename}")
+async def download_file(token: str, filename: str):
+    """Download only files registered by a recent export operation."""
+    record = exports_registry.get(token)
+    if not record or time.time() - record["created"] > 3600:
+        exports_registry.pop(token, None)
         raise HTTPException(404, "File not found")
-    return FileResponse(filepath, filename=filename)
+    if Path(filename).name != filename:
+        raise HTTPException(404, "File not found")
+    matches = [path for path in record["files"].values() if Path(path).name == filename]
+    if len(matches) != 1 or not Path(matches[0]).is_file():
+        raise HTTPException(404, "File not found")
+    return FileResponse(matches[0], filename=filename)
 
 
 
@@ -1290,23 +1672,23 @@ if __name__ == "__main__":
     print(f"SIMElab API starting on http://localhost:{port}")
     print(f"Default dataset: {DEFAULT_DATASET}")
 
-    # ── Auto-restore datasets from SQLite on startup (async) ────────────
+    # ── Auto-restore datasets from Redis on startup (async) ─────────────
     # Run in a background thread so uvicorn starts immediately.
     recovered = list_datasets()
     if recovered:
-        print(f"Found {len(recovered)} dataset(s) in simelab.db — recovering in background...")
+        print(f"Found {len(recovered)} dataset(s) in Redis — recovering in background...")
         import threading
         def _recover():
             for ds in recovered:
                 did = ds["id"]
-                print(f"  [bg] Recovering '{did}' from SQLite...")
+                print(f"  [bg] Recovering '{did}' from Redis...")
                 try:
-                    state = _load_analysis_from_db(did)
+                    state = _load_analysis_from_cache(did)
                     if state:
-                        print(f"  [bg] ✓ Recovered '{did}' from SQLite.")
+                        print(f"  [bg] ✓ Recovered '{did}' from Redis.")
                         continue
                 except Exception as e:
-                    print(f"  [bg] SQLite recovery failed for '{did}': {e}")
+                    print(f"  [bg] Redis recovery failed for '{did}': {e}")
 
                 fp = get_stored_filepath(did)
                 if fp and os.path.exists(fp):
@@ -1320,7 +1702,7 @@ if __name__ == "__main__":
                     print(f"  [bg] Skipping '{did}': source file not found at '{fp}'")
         threading.Thread(target=_recover, daemon=True).start()
     else:
-        print("  No previous datasets in simelab.db (fresh start).")
+        print("  No cached datasets in Redis (fresh start).")
 
     # Optional pre-load via env var
     if os.environ.get("SIMELAB_PRELOAD") == "1" and os.path.exists(DEFAULT_DATASET):
@@ -1329,9 +1711,9 @@ if __name__ == "__main__":
             import threading
             def _preload():
                 try:
-                    state = _load_analysis_from_db("default")
+                    state = _load_analysis_from_cache("default")
                     if state:
-                        print("  Default dataset loaded from SQLite.")
+                        print("  Default dataset loaded from Redis.")
                         return
                     _run_full_analysis(DEFAULT_DATASET, "default")
                     print("  Default dataset loaded from file.")
@@ -1339,8 +1721,9 @@ if __name__ == "__main__":
                     print(f"  Warning: Could not pre-load default: {e}")
             threading.Thread(target=_preload, daemon=True).start()
         else:
-            print("  Default dataset already recovered from SQLite.")
+            print("  Default dataset already recovered from Redis.")
     else:
         print("  Default dataset will lazy-load on first request.")
 
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    host = os.environ.get("SIMELAB_HOST", "127.0.0.1")
+    uvicorn.run(app, host=host, port=port)

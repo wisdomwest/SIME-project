@@ -1,4 +1,5 @@
 import Graph from 'graphology';
+import betweennessCentrality from 'graphology-metrics/centrality/betweenness';
 import { Edge, Vertex, NetworkMetrics } from './csvParserEnhanced';
 
 export interface ComputedMetrics extends NetworkMetrics {
@@ -34,7 +35,7 @@ export function computeSNAMetrics(vertices: Vertex[], edges: Edge[]): ComputedMe
         if (!graph.hasEdge(e.source, e.target)) {
           graph.addEdge(e.source, e.target, { weight: e.weight });
         }
-      } catch (_) {
+      } catch {
         // Edge may already exist
       }
     }
@@ -54,14 +55,12 @@ export function computeSNAMetrics(vertices: Vertex[], edges: Edge[]): ComputedMe
 
   // === BETWEENNESS CENTRALITY (Brandes algorithm via graphology) ===
   try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { betweennessCentrality } = require('graphology-metrics/centrality/betweenness');
     const bc: Record<string, number> = betweennessCentrality(graph, { normalized: true });
     for (const [node, val] of Object.entries(bc)) {
       const v = vertexMap.get(node);
       if (v) v.betweenness = val;
     }
-  } catch (_) {
+  } catch {
     // Fallback: keep parsed values
   }
 
@@ -99,7 +98,9 @@ export function computeSNAMetrics(vertices: Vertex[], edges: Edge[]): ComputedMe
       const v = vertexMap.get(node);
       if (v) v.pagerank = val;
     }
-  } catch (_) {}
+  } catch {
+    // Keep parsed PageRank values if computation fails on malformed input.
+  }
 
   // === EIGENVECTOR CENTRALITY ===
   try {
@@ -108,7 +109,9 @@ export function computeSNAMetrics(vertices: Vertex[], edges: Edge[]): ComputedMe
       const v = vertexMap.get(node);
       if (v) v.eigenvector = val;
     }
-  } catch (_) {}
+  } catch {
+    // Keep parsed eigenvector values if the iteration does not converge.
+  }
 
   // === CLUSTERING COEFFICIENT ===
   graph.forEachNode((node) => {
@@ -155,7 +158,9 @@ export function computeSNAMetrics(vertices: Vertex[], edges: Edge[]): ComputedMe
   graph.forEachEdge((_edge, _attrs, source, target) => {
     try {
       if (graph.hasEdge(target, source)) reciprocalEdges++;
-    } catch (_) {}
+    } catch {
+      // Nodes may disappear only if an imported graph is concurrently replaced.
+    }
   });
   const reciprocity = graph.size > 0 ? reciprocalEdges / graph.size : 0;
 

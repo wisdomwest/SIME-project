@@ -145,6 +145,35 @@ def _read_nodexl_sheet_fast(filepath: str, sheet_name: str) -> pd.DataFrame:
     return df
 
 
+def _worksheet_to_dataframe(ws) -> pd.DataFrame:
+    """Convert an already-open NodeXL worksheet without reopening the XLSX."""
+    header_row = next(ws.iter_rows(min_row=2, max_row=2, values_only=True), ())
+    headers = [str(value).strip() if value is not None else "" for value in header_row]
+    rows = list(ws.iter_rows(min_row=3, values_only=True))
+    df = pd.DataFrame(rows, columns=headers)
+    return df.dropna(axis=1, how="all").dropna(axis=0, how="all")
+
+
+def _overall_metrics_from_worksheet(ws) -> Optional[Dict[str, Any]]:
+    """Parse an already-open Overall Metrics worksheet."""
+    metrics = {}
+    for row in ws.iter_rows(min_row=1, values_only=True):
+        if not row:
+            continue
+        key = str(row[0]).strip() if row[0] is not None else ""
+        value = row[1] if len(row) > 1 else None
+        if not key or value is None:
+            continue
+        try:
+            value = float(value)
+            if value == int(value):
+                value = int(value)
+        except (ValueError, TypeError):
+            pass
+        metrics[key] = value
+    return metrics or None
+
+
 def _detect_format(filepath: str) -> str:
     """
     Detect file format.
@@ -411,9 +440,22 @@ def load_nodexl(filepath: str) -> Tuple[nx.DiGraph, Dict[str, Any]]:
     }
 
     if fmt == "nodexl_xlsx":
-        edges_df = _parse_edges_nodexl(filepath)
-        vertices_df = _parse_vertices(filepath)
-        overall_metrics = _parse_overall_metrics(filepath)
+        # Open the ZIP-backed workbook once. The old path reopened it for each
+        # sheet, which dominated upload time for multi-megabyte NodeXL files.
+        wb = openpyxl.load_workbook(filepath, data_only=True, read_only=True)
+        try:
+            edges_df = _worksheet_to_dataframe(wb["Edges"])
+            if "Vertex 1" in edges_df.columns:
+                edges_df = edges_df.rename(columns={"Vertex 1": "source", "Vertex 2": "target"})
+            if "Relationship" in edges_df.columns:
+                edges_df = edges_df.rename(columns={"Relationship": "edge_type"})
+            vertices_df = _worksheet_to_dataframe(wb["Vertices"])
+            overall_metrics = (
+                _overall_metrics_from_worksheet(wb["Overall Metrics"])
+                if "Overall Metrics" in wb.sheetnames else None
+            )
+        finally:
+            wb.close()
     else:
         edges_df = _parse_edges_csv(filepath)
         vertices_df = None
@@ -429,6 +471,9 @@ def load_nodexl(filepath: str) -> Tuple[nx.DiGraph, Dict[str, Any]]:
     edges_df["target"] = edges_df["target"].astype(str).str.strip()
 
     metadata["raw_edge_count"] = len(edges_df)
+    # Internal hand-off for downstream hashtag analysis. This prevents the
+    # server from reopening and parsing the same XLSX Edges sheet a second time.
+    metadata["_edges_df"] = edges_df
 
     # Build graph
     G = build_graph(edges_df)

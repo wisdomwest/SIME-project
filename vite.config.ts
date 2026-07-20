@@ -9,45 +9,6 @@ export default defineConfig({
   ],
   server: {
     proxy: {
-      '/api/nvidia': {
-        target: 'https://integrate.api.nvidia.com',
-        changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/api\/nvidia/, ''),
-        configure: (proxy) => {
-          proxy.on('proxyReq', (proxyReq, req) => {
-            const auth = req.headers['authorization'];
-            if (auth) {
-              proxyReq.setHeader('Authorization', auth);
-            }
-          });
-        },
-      },
-      '/api/deepseek': {
-        target: 'https://api.deepseek.com',
-        changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/api\/deepseek/, ''),
-        configure: (proxy) => {
-          proxy.on('proxyReq', (proxyReq, req) => {
-            const auth = req.headers['authorization'];
-            if (auth) {
-              proxyReq.setHeader('Authorization', auth);
-            }
-          });
-        },
-      },
-      '/api/tokenrouter': {
-        target: 'https://api.tokenrouter.com',
-        changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/api\/tokenrouter/, ''),
-        configure: (proxy) => {
-          proxy.on('proxyReq', (proxyReq, req) => {
-            const auth = req.headers['authorization'];
-            if (auth) {
-              proxyReq.setHeader('Authorization', auth);
-            }
-          });
-        },
-      },
       '/api/simelab': {
         target: 'http://localhost:8000',
         changeOrigin: true,

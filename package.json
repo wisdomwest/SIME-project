@@ -4,10 +4,13 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "concurrently --names python,vite --prefix-colors green,blue \"npm run python\" \"npm run vite\"",
+    "dev": "concurrently --kill-others-on-fail --names redis,python,vite --prefix-colors red,green,blue \"npm run redis\" \"npm run python\" \"npm run vite\"",
+    "redis": "sh -c 'redis-cli -p 6379 ping >/dev/null 2>&1 || exec redis-server --port 6379 --save \"\" --appendonly no'",
     "vite": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
+    "test:python": "python3 -m unittest discover -s python/tests -p 'test_*.py'",
+    "check": "npm run lint && npm run build && npm run test:python",
     "preview": "vite preview",
     "python": "/home/west/sime-lab-usiu/.venv/bin/python3 python/server.py",
     "python:install": "pip install -r python/requirements.txt"

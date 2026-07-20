@@ -1,35 +1,36 @@
-import React, { useEffect } from 'react';
+import React, { lazy, Suspense, useEffect, useState } from 'react';
 import { LoadingOverlay } from './components/layout/LoadingOverlay';
-import { LandingPage } from './pages/LandingPage';
-import { OverviewPage } from './pages/OverviewPage';
-import { NetworkPage } from './pages/NetworkPage';
-import { SentimentPage } from './pages/SentimentPage';
-import { DisinfoPage } from './pages/DisinfoPage';
-import { HashtagsPage } from './pages/HashtagsPage';
-import { CensorshipPage } from './pages/CensorshipPage';
-import { DriftPage } from './pages/DriftPage';
-import { ReportPage } from './pages/ReportPage';
-import { DocsPage } from './pages/DocsPage';
-import { CommercialPage } from './pages/CommercialPage';
 import { AccountDrawer } from './components/insights/AccountDrawer';
 import { AppShell } from './components/layout/AppShell';
 import { useUrlState } from './app/useUrlState';
 import { useSocialData } from './hooks/useSocialData';
 import { getBackendLLMConfig } from './services/pythonApi';
 import { ThemeToggle } from './components/layout/ThemeToggle';
+import { setBackendConfig } from './services/llmService';
+
+const LandingPage = lazy(() => import('./pages/LandingPage').then((module) => ({ default: module.LandingPage })));
+const OverviewPage = lazy(() => import('./pages/OverviewPage').then((module) => ({ default: module.OverviewPage })));
+const NetworkPage = lazy(() => import('./pages/NetworkPage').then((module) => ({ default: module.NetworkPage })));
+const SentimentPage = lazy(() => import('./pages/SentimentPage').then((module) => ({ default: module.SentimentPage })));
+const DisinfoPage = lazy(() => import('./pages/DisinfoPage').then((module) => ({ default: module.DisinfoPage })));
+const HashtagsPage = lazy(() => import('./pages/HashtagsPage').then((module) => ({ default: module.HashtagsPage })));
+const CensorshipPage = lazy(() => import('./pages/CensorshipPage').then((module) => ({ default: module.CensorshipPage })));
+const DriftPage = lazy(() => import('./pages/DriftPage').then((module) => ({ default: module.DriftPage })));
+const ReportPage = lazy(() => import('./pages/ReportPage').then((module) => ({ default: module.ReportPage })));
+const DocsPage = lazy(() => import('./pages/DocsPage').then((module) => ({ default: module.DocsPage })));
+const CommercialPage = lazy(() => import('./pages/CommercialPage').then((module) => ({ default: module.CommercialPage })));
 
 const App: React.FC = () => {
   const { route } = useUrlState();
   const { graphData } = useSocialData();
+  const [, setConfigVersion] = useState(0);
 
   useEffect(() => {
     // Sync LLM config
     getBackendLLMConfig()
       .then((cfg) => {
-        if (cfg?.apiKey) {
-          localStorage.setItem('simelab_llm_provider', cfg.provider);
-          localStorage.setItem('simelab_llm_key', cfg.apiKey);
-        }
+        setBackendConfig(cfg);
+        setConfigVersion((value) => value + 1);
       })
       .catch(() => { });
 
@@ -53,7 +54,9 @@ const App: React.FC = () => {
         <div className="absolute top-4 right-4 z-40">
           <ThemeToggle />
         </div>
-        {route.name === 'docs' ? <DocsPage /> : <LandingPage />}
+        <Suspense fallback={<RouteFallback />}>
+          {route.name === 'docs' ? <DocsPage /> : <LandingPage />}
+        </Suspense>
       </div>
     );
   }
@@ -62,7 +65,7 @@ const App: React.FC = () => {
     <>
       <LoadingOverlay />
       <AppShell hasData={hasData}>
-        {renderPage(route.name)}
+        <Suspense fallback={<RouteFallback />}>{renderPage(route.name)}</Suspense>
         <AccountDrawer />
       </AppShell>
     </>
@@ -86,5 +89,9 @@ const App: React.FC = () => {
     }
   }
 };
+
+function RouteFallback() {
+  return <div className="h-full min-h-64 grid place-items-center text-sm text-ink-mute">Loading view…</div>;
+}
 
 export default App;

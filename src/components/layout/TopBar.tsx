@@ -8,7 +8,7 @@ import { ThemeToggle } from './ThemeToggle';
 
 export function TopBar({ hasData }: { hasData: boolean }) {
   const { route, navigate } = useUrlState();
-  const { graphData, computedMetrics } = useSocialData();
+  const { graphData } = useSocialData();
   const [shareCopied, setShareCopied] = useState(false);
 
   const datasetId = 'datasetId' in route ? route.datasetId : null;
@@ -115,7 +115,7 @@ export function TopBar({ hasData }: { hasData: boolean }) {
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => exportResultsCSV(graphData, computedMetrics)}
+              onClick={() => exportResultsCSV(graphData)}
             >
               <Download size={12} />
               Export CSV

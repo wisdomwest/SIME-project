@@ -58,6 +58,37 @@ class HashtagAnalyzer:
         self.lifecycle: Dict[str, str] = {}       # hashtag → phase
         self.authenticity: Dict[str, Dict] = {}   # hashtag → {score, label, features}
         self.gmm_labels: Dict[str, str] = {}      # hashtag → "Organic" | "Artificial"
+        self._edge_records: Optional[List[Dict]] = None
+        self._tag_positions: Optional[Dict[str, List[int]]] = None
+
+    def _build_edge_index(self) -> Tuple[List[Dict], Dict[str, List[int]]]:
+        """Extract hashtags from edge text once and reuse the result everywhere."""
+        if self._edge_records is not None and self._tag_positions is not None:
+            return self._edge_records, self._tag_positions
+        if self.edges_df is None:
+            self._edge_records, self._tag_positions = [], {}
+            return self._edge_records, self._tag_positions
+
+        records = self.edges_df.to_dict("records")
+        text_columns = [
+            column for column in ("Tweet", "tweet", "text", "content", "Tooltip", "Label")
+            if column in self.edges_df.columns
+        ]
+        tag_positions: Dict[str, List[int]] = defaultdict(list)
+        for position, record in enumerate(records):
+            text = ""
+            for column in text_columns:
+                value = record.get(column)
+                if value is not None and pd.notna(value):
+                    text = str(value)
+                    break
+            for word in text.split():
+                if word.startswith("#") and len(word) > 1:
+                    tag_positions[word.strip("#").lower()].append(position)
+
+        self._edge_records = records
+        self._tag_positions = dict(tag_positions)
+        return self._edge_records, self._tag_positions
 
     # ─── Hashtag Extraction ──────────────────────────────────────────────────
 
@@ -71,15 +102,9 @@ class HashtagAnalyzer:
         hashtags = defaultdict(list)
 
         # From edge data (tweet text, tooltip, etc.)
-        if self.edges_df is not None:
-            for col in ("Tweet", "tweet", "text", "content", "Tooltip", "Label"):
-                if col in self.edges_df.columns:
-                    for idx, row in self.edges_df.iterrows():
-                        text = str(row[col]) if pd.notna(row[col]) else ""
-                        tags = [w.strip("#").lower() for w in text.split()
-                                if w.startswith("#") and len(w) > 1]
-                        for tag in tags:
-                            hashtags[tag].append(f"edge_{idx}")
+        _, tag_positions = self._build_edge_index()
+        for tag, positions in tag_positions.items():
+            hashtags[tag].extend(f"edge_{position}" for position in positions)
 
         # From node attributes
         if include_nodes:
@@ -113,35 +138,24 @@ class HashtagAnalyzer:
             self.lifecycle = {}
             return self.lifecycle
 
+        records, tag_positions = self._build_edge_index()
+
         # Extract hashtags per edge with timestamps
         hashtag_times: Dict[str, List[float]] = defaultdict(list)
         hashtag_authors: Dict[str, set] = defaultdict(set)
 
-        for idx, row in self.edges_df.iterrows():
-            # Try to get text from any text column
-            text = ""
-            for col in ("Tweet", "tweet", "text", "content", "Tooltip", "Label"):
-                if col in self.edges_df.columns and pd.notna(row.get(col)):
-                    text = str(row[col])
-                    break
-
-            tags = [w.strip("#").lower() for w in text.split()
-                    if w.startswith("#") and len(w) > 1]
-
-            # Get timestamp
-            ts = None
-            if time_column in self.edges_df.columns:
-                ts = row[time_column]
+        for tag, positions in tag_positions.items():
+            for position in positions:
+                row = records[position]
+                ts = row.get(time_column) if time_column in self.edges_df.columns else None
                 try:
-                    ts = float(pd.Timestamp(ts).timestamp())
+                    ts = float(pd.Timestamp(ts).timestamp()) if ts is not None else None
                 except (ValueError, TypeError):
                     ts = None
-
-            for tag in tags:
                 if ts is not None:
                     hashtag_times[tag].append(ts)
-                source = str(row.get("source", ""))
-                target = str(row.get("target", ""))
+                source = str(row.get("source", "") or "")
+                target = str(row.get("target", "") or "")
                 hashtag_authors[tag].add(source)
                 hashtag_authors[tag].add(target)
 
@@ -216,6 +230,7 @@ class HashtagAnalyzer:
             Dict[hashtag → {score, label, features}]
         """
         hashtags = self.extract_hashtags(include_nodes=False)
+        records, _ = self._build_edge_index()
         if len(hashtags) < 5:
             self.authenticity = {}
             return self.authenticity
@@ -232,10 +247,10 @@ class HashtagAnalyzer:
             authors = set()
             for occ in occurrences:
                 if occ.startswith("edge_"):
-                    idx = int(occ.replace("edge_", ""))
-                    if idx < len(self.edges_df):
-                        src = str(self.edges_df.iloc[idx].get("source", ""))
-                        tgt = str(self.edges_df.iloc[idx].get("target", ""))
+                    position = int(occ.replace("edge_", ""))
+                    if position < len(records):
+                        src = str(records[position].get("source", "") or "")
+                        tgt = str(records[position].get("target", "") or "")
                         if src:
                             authors.add(src)
                         if tgt:
@@ -285,12 +300,20 @@ class HashtagAnalyzer:
             vec.append(np.mean(clustering_vals) if clustering_vals else 0)
 
             # 7. Original content ratio: 1 - retweet_ratio
-            if self.edges_df is not None and "Relationship" in self.edges_df.columns:
-                relevant = self.edges_df.iloc[
-                    [int(o.replace("edge_", "")) for o in occurrences
-                     if o.startswith("edge_") and int(o.replace("edge_", "")) < len(self.edges_df)]
+            relation_column = (
+                "Relationship" if "Relationship" in self.edges_df.columns
+                else "edge_type" if "edge_type" in self.edges_df.columns
+                else None
+            )
+            if relation_column:
+                relevant = [
+                    records[int(occ.replace("edge_", ""))]
+                    for occ in occurrences
+                    if occ.startswith("edge_") and int(occ.replace("edge_", "")) < len(records)
                 ]
-                retweet_count = (relevant["Relationship"] == "Retweet").sum()
+                retweet_count = sum(
+                    1 for record in relevant if record.get(relation_column) == "Retweet"
+                )
                 vec.append(1 - retweet_count / max(len(relevant), 1))
             else:
                 vec.append(0.5)
@@ -334,7 +357,15 @@ class HashtagAnalyzer:
                 "score": round(authenticity_score, 4),
                 "label": "Organic" if is_organic else "Artificial",
                 "features": {f"f{j+1}": round(float(X[i, j]), 4) for j in range(7)},
-                "n_authors": len(hashtags[tag]),
+                "n_authors": len({
+                    author
+                    for position in self._tag_positions.get(tag, [])
+                    for author in (
+                        str(records[position].get("source", "") or ""),
+                        str(records[position].get("target", "") or ""),
+                    )
+                    if author
+                }),
             }
             self.gmm_labels[tag] = "Organic" if is_organic else "Artificial"
 

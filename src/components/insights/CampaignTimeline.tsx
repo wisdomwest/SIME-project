@@ -4,10 +4,10 @@ import { AIInsights } from '../../engine/aiInsights';
 
 export function CampaignTimeline({ insights }: { insights: AIInsights }) {
   const { graphData, computedMetrics } = useSocialData();
-  if (!graphData || !computedMetrics) return null;
 
   // Build per-day counts from vertex dates.
   const series = useMemo(() => {
+    if (!graphData) return [];
     const counts = new Map<string, number>();
     graphData.vertices.forEach((v) => {
       if (!v.date) return;
@@ -15,7 +15,7 @@ export function CampaignTimeline({ insights }: { insights: AIInsights }) {
       counts.set(day, (counts.get(day) || 0) + 1);
     });
     return [...counts.entries()].sort((a, b) => a[0].localeCompare(b[0]));
-  }, [graphData.vertices]);
+  }, [graphData]);
 
   const max = useMemo(() => {
     return Math.max(...series.map(([, c]) => c), 1);
@@ -26,6 +26,8 @@ export function CampaignTimeline({ insights }: { insights: AIInsights }) {
 
   // Suspicious accounts
   const suspicious = insights.suspiciousAccounts.slice(0, 5);
+
+  if (!graphData || !computedMetrics) return null;
 
   return (
     <div className="space-y-6">

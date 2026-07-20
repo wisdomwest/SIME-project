@@ -262,19 +262,21 @@ export function DocsPage() {
           <Metric
             name="Censorship Vulnerability Index (CVI)"
             formula="CVI = (1/λ₂) · max(C_B(v))"
-            body="The Laplacian's algebraic connectivity (λ₂, the Fiedler value) indicates how many edges must be removed to fragment the network. CVI multiplies λ₂'s reciprocal by the highest betweenness centrality. High CVI = fragile AND has a single-point-of-failure account."
+            body="SIMElab's custom CVI divides maximum directed betweenness by the matching unnormalized Fiedler value. It is undefined for a disconnected whole network because λ₂ = 0. In that case the dashboard reports a component CVI calculated entirely within the largest connected component and states its node coverage."
             interpretation={[
-              ['High CVI + low λ₂', 'The network is one removed account away from fragmentation, AND there is a critical bridge account whose deletion would splinter the graph. High censorship risk.'],
-              ['Low CVI + low λ₂', 'Fragile in general, but no single account is a lynchpin. Censorship would need to remove many accounts.'],
+              ['Whole graph λ₂ = 0', 'The graph is already disconnected. Whole-network CVI is N/A; use the component count and giant-component metrics.'],
+              ['High component CVI + low λ₂', 'The giant component is fragile and contains a comparatively strong bridge account.'],
+              ['Low component CVI + low λ₂', 'The giant component is fragile in general, but no single account dominates the custom ratio.'],
               ['High λ₂', 'Robust connectivity. Hard to fragment even by removing influential accounts.'],
             ]}
           />
           <Metric
             name="Fiedler Value (λ₂)"
             formula="Second-smallest eigenvalue of the Laplacian L = D − A"
-            body="Measures the 'algebraic connectivity' of the graph — how well-connected it is as a whole. Near zero means the graph is close to splitting apart."
+            body="Measures algebraic connectivity. The whole graph has λ₂ = 0 whenever it contains multiple connected components. For an already disconnected network, SIMElab additionally reports the largest component's λ₂ and its percentage of all nodes."
             interpretation={[
-              ['λ₂ ≈ 0', 'The network is one edge away from fragmentation. Extremely fragile.'],
+              ['λ₂ = 0', 'The network is disconnected (or numerically indistinguishable from disconnected). Check the component count.'],
+              ['Small positive λ₂', 'The measured connected component is fragile and has few redundant paths.'],
               ['λ₂ < 0.1', 'Very fragile. Removing a few bridges would split the graph.'],
               ['λ₂ > 0.5', 'Robust. Many redundant connections hold the graph together.'],
             ]}

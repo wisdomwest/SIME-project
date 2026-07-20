@@ -76,7 +76,10 @@ export function OverviewPage() {
           className="font-display text-5xl text-ink font-light leading-[1.05] tracking-[-0.02em] max-w-3xl"
           style={{ fontVariationSettings: "'opsz' 144, 'SOFT' 100" }}
         >
-          {m.totalVertices.toLocaleString()} accounts. {m.totalEdges.toLocaleString()} connections. <em className="text-ember not-italic">One conversation.</em>
+          {m.totalVertices.toLocaleString()} accounts. {m.totalEdges.toLocaleString()} connections.{' '}
+          <em className="text-ember not-italic">
+            {m.connectedComponents === 1 ? 'One conversation.' : 'Fragmented conversation.'}
+          </em>
         </h1>
         <p className="text-base text-ink-soft leading-relaxed max-w-2xl">
           {m.connectedComponents} community cluster{m.connectedComponents !== 1 ? 's' : ''}, a density of {m.density.toFixed(4)}, and{' '}

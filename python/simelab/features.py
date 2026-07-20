@@ -102,7 +102,9 @@ class FeatureEngineer:
     def _compute_betweenness(self) -> np.ndarray:
         """Normalized betweenness centrality (0-1). Uses k=min(n, 500) sampling for large graphs."""
         k = min(self.n, 500) if self.n > 500 else None
-        bc_dict = nx.betweenness_centrality(self.G, k=k, normalized=True)
+        bc_dict = nx.betweenness_centrality(
+            self.G, k=k, normalized=True, seed=42 if k is not None else None
+        )
         return np.array([bc_dict.get(node, 0.0) for node in self._nodes])
 
     def _compute_closeness(self) -> np.ndarray:

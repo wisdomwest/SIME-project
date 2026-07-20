@@ -1,11 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, Bot, User, Settings, Key, X, Loader2, Trash2 } from 'lucide-react';
+import { Send, Bot, User, Loader2, Trash2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { marked } from 'marked';
-import {
-  queryLLMStreaming, getConfig, saveConfig, clearConfig,
-  LLMProvider
-} from '../services/llmService';
+import { queryLLMStreaming, getConfig } from '../services/llmService';
 import { ComputedMetrics } from '../engine/engineTypes';
 import { AIInsights } from '../engine/aiInsights';
 import type { GraphData } from '../engine/csvParserEnhanced';
@@ -107,9 +104,6 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ graphData, computedMetrics, aiIns
   const { pythonDatasetId, chatMessages, setChatMessages } = useSocialData();
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [showSettings, setShowSettings] = useState(false);
-  const [apiKey, setApiKey] = useState('');
-  const [provider, setProvider] = useState<LLMProvider>('deepseek');
   const [streamingContent, setStreamingContent] = useState('');
   const [pythonContext, setPythonContext] = useState('');
   const chatEndRef = useRef<HTMLDivElement>(null);
@@ -146,8 +140,8 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ graphData, computedMetrics, aiIns
         }
         if (censorship) {
           hasData = true;
-          pyCtx += `- Censorship Vulnerability Index (CVI): ${censorship.cvi ? censorship.cvi.toFixed(4) : "N/A"}\n`;
-          pyCtx += `- Algebraic Connectivity (Fiedler Value): ${censorship.fiedler_value.toFixed(4)}\n`;
+          pyCtx += `- Whole-network components: ${censorship.component_count}; Fiedler λ2: ${censorship.fiedler_value.toFixed(4)}; CVI: ${censorship.cvi != null ? censorship.cvi.toFixed(4) : "N/A (disconnected)"}\n`;
+          pyCtx += `- Giant component: ${(censorship.largest_component_share * 100).toFixed(1)}% of nodes; Fiedler λ2: ${censorship.largest_component_fiedler?.toFixed(4) ?? "N/A"}; component CVI: ${censorship.component_cvi?.toFixed(6) ?? "N/A"}\n`;
           pyCtx += `- Key Structural Holes: ${censorship.structural_holes.slice(0, 3).map(sh => `@${sh.node} (SI: ${sh.si_score.toFixed(3)})`).join(', ')}\n`;
         }
         if (hashtags) {
@@ -163,7 +157,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ graphData, computedMetrics, aiIns
       }
     }
     fetchPythonContext();
-  }, []);
+  }, [pythonDatasetId]);
 
   const context = buildContext(graphData, computedMetrics, aiInsights) + pythonContext + buildDriftContext(driftData);
 
@@ -192,14 +186,6 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ graphData, computedMetrics, aiIns
     }
   };
 
-  const handleSaveKey = () => {
-    if (apiKey.trim()) {
-      saveConfig(provider, apiKey.trim());
-      setShowSettings(false);
-      setApiKey('');
-    }
-  };
-
   return (
     <div className={`flex flex-col ${isSidebar ? 'h-full flex-1 min-h-0' : 'h-[calc(100vh-280px)] min-h-[500px]'}`}>
       {/* Header */}
@@ -212,29 +198,16 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ graphData, computedMetrics, aiIns
             <div>
               <h3 className="text-sm font-bold tracking-tight">Analyst Chat</h3>
               <p className="text-[10px] text-text-muted">
-                {config ? `${config.provider === 'deepseek' ? 'DeepSeek' : 'NVIDIA NIM'} • ${config.model}` : 'No API key configured'}
+                {config ? `${config.provider} • ${config.model}` : 'Server LLM unavailable'}
               </p>
             </div>
           </div>
-          <button
-            onClick={() => { setShowSettings(true); setProvider(config?.provider || 'deepseek'); }}
-            className="p-2 hover:bg-white/5 rounded-lg transition-colors text-text-muted hover:text-white"
-            title="API Settings"
-          >
-            <Settings size={16} />
-          </button>
         </div>
       ) : (
         <div className="flex items-center justify-between mb-3 border-b border-rule pb-2">
           <span className="text-[10px] text-ink-soft uppercase tracking-wider">
-            {config ? `${config.provider === 'deepseek' ? 'DeepSeek' : config.provider === 'nvidia-nim' ? 'NVIDIA NIM' : 'TokenRouter'}` : 'Credentials Required'}
+            {config ? config.provider : 'Server LLM unavailable'}
           </span>
-          <button
-            onClick={() => { setShowSettings(true); setProvider(config?.provider || 'deepseek'); }}
-            className="text-ink-soft hover:text-ink transition-colors flex items-center gap-1 text-[10px] font-medium"
-          >
-            <Settings size={12} /> Configure
-          </button>
         </div>
       )}
 
@@ -318,7 +291,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ graphData, computedMetrics, aiIns
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && sendMessage(input)}
-          placeholder={config ? 'Ask about this dataset...' : 'Configure API key to start...'}
+          placeholder={config ? 'Ask about this dataset...' : 'Configure an LLM key on the server...'}
           disabled={!config || isLoading}
           className="flex-1 bg-[#0a1120] border border-white/10 rounded-xl py-3 px-4 text-sm text-white focus:outline-none focus:border-[#8b5cf6] disabled:opacity-50"
         />
@@ -340,89 +313,6 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ graphData, computedMetrics, aiIns
         )}
       </div>
 
-      {/* Settings Modal */}
-      <AnimatePresence>
-        {showSettings && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center"
-            onClick={() => setShowSettings(false)}
-          >
-            <motion.div
-              initial={{ scale: 0.95, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.95, opacity: 0 }}
-              onClick={(e) => e.stopPropagation()}
-              className="bg-[#0f172a] border border-white/10 rounded-2xl p-6 w-full max-w-md mx-4"
-            >
-              <div className="flex items-center justify-between mb-6">
-                <div className="flex items-center gap-3">
-                  <Key size={18} className="text-[#8b5cf6]" />
-                  <h3 className="text-sm font-bold">API Settings</h3>
-                </div>
-                <button onClick={() => setShowSettings(false)} className="p-1 hover:bg-white/5 rounded-lg">
-                  <X size={18} />
-                </button>
-              </div>
-
-              <div className="space-y-4">
-                <div>
-                  <label className="text-[10px] font-bold text-text-muted uppercase block mb-2">Provider</label>
-                  <div className="grid grid-cols-3 gap-2">
-                    {(['deepseek', 'nvidia-nim', 'tokenrouter'] as LLMProvider[]).map((p) => (
-                      <button
-                        key={p}
-                        onClick={() => setProvider(p)}
-                        className={`py-3 px-2 rounded-xl text-xs font-bold border transition-all ${provider === p
-                            ? 'bg-[#8b5cf6]/20 border-[#8b5cf6] text-[#8b5cf6]'
-                            : 'bg-white/[0.02] border-white/5 text-text-secondary hover:border-white/10'
-                          }`}
-                      >
-                        {p === 'deepseek' ? 'DeepSeek' : p === 'nvidia-nim' ? 'NVIDIA NIM' : 'TokenRouter'}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div>
-                  <label className="text-[10px] font-bold text-text-muted uppercase block mb-2">API Key</label>
-                  <input
-                    type="password"
-                    value={apiKey}
-                    onChange={(e) => setApiKey(e.target.value)}
-                    placeholder="nvapi-... or sk-..."
-                    className="w-full bg-[#0a1120] border border-white/10 rounded-xl py-3 px-4 text-sm text-white focus:outline-none focus:border-[#8b5cf6]"
-                    onKeyDown={(e) => e.key === 'Enter' && handleSaveKey()}
-                  />
-                  <p className="text-[9px] text-text-muted mt-2">
-                    Key stored locally in your browser only. Never sent to our servers.
-                  </p>
-                </div>
-
-                <div className="flex gap-2">
-                  <button
-                    onClick={handleSaveKey}
-                    disabled={!apiKey.trim()}
-                    className="flex-1 bg-[#8b5cf6] hover:bg-[#7c3aed] text-white font-bold py-3 rounded-xl text-sm transition-all disabled:opacity-50"
-                  >
-                    Save Key
-                  </button>
-                  {config && (
-                    <button
-                      onClick={() => { clearConfig(); setShowSettings(false); }}
-                      className="px-4 py-3 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 rounded-xl text-sm font-bold transition-all"
-                    >
-                      Remove
-                    </button>
-                  )}
-                </div>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
     </div>
   );
 };

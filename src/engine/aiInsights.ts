@@ -169,7 +169,7 @@ function detectTimelineEvents(vertices: Vertex[]): TimelineEvent[] {
   const entries = [...dateCounts.entries()].sort((a, b) => a[0].localeCompare(b[0]));
   if (entries.length === 0) return [];
 
-  const avgVolume = entries.reduce((s, [_, c]) => s + c, 0) / entries.length;
+  const avgVolume = entries.reduce((sum, entry) => sum + entry[1], 0) / entries.length;
 
   return entries.map(([date, count]) => ({
     date,
@@ -221,10 +221,10 @@ function hashtagTrends(vertices: Vertex[]): HashtagStat[] {
 
 // === POLARIZATION INDEX ===
 function computePolarization(vertices: Vertex[]): number {
-  const posRatio = vertices.filter(v => v.sentiment === 'Pos').length / Math.max(vertices.length, 1);
-  const negRatio = vertices.filter(v => v.sentiment === 'Neg').length / Math.max(vertices.length, 1);
-  // High polarization = mostly positive OR mostly negative, not mixed
-  return Math.abs(posRatio - negRatio);
+  const posCount = vertices.filter(v => v.sentiment === 'Pos').length;
+  const negCount = vertices.filter(v => v.sentiment === 'Neg').length;
+  // Balanced two-camp index: high only when both outer clusters are large.
+  return (2 * Math.min(posCount, negCount)) / Math.max(vertices.length, 1);
 }
 
 // === AUTO-GENERATED SUMMARY ===

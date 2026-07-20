@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import { Vertex, Edge } from '../../engine/csvParserEnhanced';
 import { Loader2, ZoomIn, ZoomOut, Maximize2 } from 'lucide-react';
 import { safeImgUrl } from '../../app/format';
+import type cytoscape from 'cytoscape';
 
 interface NetworkGraphProps {
   vertices: Vertex[];
@@ -14,6 +15,50 @@ interface NetworkGraphProps {
   compact?: boolean;
 }
 
+interface GraphErrorBoundaryProps {
+  children: React.ReactNode;
+  resetKey: string;
+}
+
+class GraphErrorBoundary extends React.Component<GraphErrorBoundaryProps, { failed: boolean }> {
+  state = { failed: false };
+
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+
+  componentDidCatch(error: Error, info: React.ErrorInfo) {
+    console.error('Network graph render failed:', error, info);
+  }
+
+  componentDidUpdate(previous: GraphErrorBoundaryProps) {
+    if (this.state.failed && previous.resetKey !== this.props.resetKey) {
+      this.setState({ failed: false });
+    }
+  }
+
+  render() {
+    if (this.state.failed) {
+      return (
+        <div className="w-full h-full grid place-items-center bg-paper border border-rule p-6 text-center">
+          <div>
+            <p className="text-sm text-ink font-medium">The network renderer could not start.</p>
+            <p className="text-xs text-ink-mute mt-1">The rest of the analysis is still available.</p>
+            <button
+              type="button"
+              onClick={() => this.setState({ failed: false })}
+              className="mt-3 px-3 py-1.5 border border-rule text-xs text-ink-soft hover:border-ink hover:text-ink"
+            >
+              Retry graph
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 const MAX_RENDER_NODES = 800;
 const RENDER_TIMEOUT_MS = 12000;
 
@@ -23,7 +68,7 @@ const CLUSTER_COLORS = [
   '#84cc16', '#a855f7', '#06b6d4', '#eab308', '#d946ef',
 ];
 
-const NetworkGraph: React.FC<NetworkGraphProps> = ({
+const NetworkGraphCanvas: React.FC<NetworkGraphProps> = ({
   vertices,
   edges,
   filteredVertices,
@@ -32,7 +77,7 @@ const NetworkGraph: React.FC<NetworkGraphProps> = ({
   isActive = true,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
-  const cyRef = useRef<any>(null);
+  const cyRef = useRef<cytoscape.Core | null>(null);
   const [isReady, setIsReady] = useState(false);
   const [isRendering, setIsRendering] = useState(false);
   const [showFullGraph, setShowFullGraph] = useState(false);
@@ -95,7 +140,7 @@ const NetworkGraph: React.FC<NetworkGraphProps> = ({
     const visibleEdgeIds = new Set(displayEdges.map(e => `${e.source}|||${e.target}`));
 
     cy.batch(() => {
-      cy.nodes().forEach((node: any) => {
+      cy.nodes().forEach((node) => {
         if (visibleNodeIds.has(node.id())) {
           node.style('display', 'element');
         } else {
@@ -103,7 +148,7 @@ const NetworkGraph: React.FC<NetworkGraphProps> = ({
         }
       });
 
-      cy.edges().forEach((edge: any) => {
+      cy.edges().forEach((edge) => {
         if (visibleEdgeIds.has(edge.id())) {
           edge.style('display', 'element');
         } else {
@@ -123,7 +168,9 @@ const NetworkGraph: React.FC<NetworkGraphProps> = ({
   const initGraph = useCallback(async () => {
     if (!containerRef.current || baseDisplayVertices.length === 0) return;
     if (cyRef.current) {
-      try { cyRef.current.destroy(); } catch (_) {}
+      try { cyRef.current.destroy(); } catch {
+        // The graph may already have been destroyed during a rapid route change.
+      }
       cyRef.current = null;
     }
     setIsReady(false);
@@ -131,34 +178,37 @@ const NetworkGraph: React.FC<NetworkGraphProps> = ({
     mountedRef.current = true;
 
     const safetyTimer = setTimeout(() => {
-      if (mountedRef.current && !isReady) {
+      if (mountedRef.current) {
         setIsReady(true);
         setIsRendering(false);
       }
     }, RENDER_TIMEOUT_MS);
 
     try {
-      const cytoscape = (await import('cytoscape')).default;
+      const createCytoscape = (await import('cytoscape')).default;
       if (!mountedRef.current || !containerRef.current) return;
 
       const maxDegree = Math.max(...baseDisplayVertices.map((v) => v.degree), 1);
       const nodeSize = (d: number) => Math.max(6, Math.min(36, 6 + (d / maxDegree) * 30));
 
-      const elements: any[] = [
-        ...baseDisplayVertices.map((v) => ({
-          data: {
-            id: v.id,
-            label: v.label.length > 14 ? v.label.slice(0, 14) : v.label,
-            degree: v.degree,
-            cluster: v.cluster,
-            sentiment: v.sentiment,
-            size: nodeSize(v.degree),
-            color: CLUSTER_COLORS[(v.cluster >= 0 ? v.cluster : 0) % CLUSTER_COLORS.length],
-            image_url: v.image_url || '',
-            x: v.x,
-            y: v.y,
-          },
-        })),
+      const elements: cytoscape.ElementDefinition[] = [
+        ...baseDisplayVertices.map((v) => {
+          const imageUrl = safeImgUrl(v.image_url);
+          return {
+            data: {
+              id: v.id,
+              label: v.label.length > 14 ? v.label.slice(0, 14) : v.label,
+              degree: v.degree,
+              cluster: v.cluster,
+              sentiment: v.sentiment,
+              size: nodeSize(v.degree),
+              color: CLUSTER_COLORS[(v.cluster >= 0 ? v.cluster : 0) % CLUSTER_COLORS.length],
+              ...(imageUrl ? { image_url: imageUrl } : {}),
+              x: v.x,
+              y: v.y,
+            },
+          };
+        }),
         ...baseDisplayEdges.slice(0, 6000).map((e) => ({
           data: {
             id: `${e.source}|||${e.target}`,
@@ -169,7 +219,7 @@ const NetworkGraph: React.FC<NetworkGraphProps> = ({
         })),
       ];
 
-      const cy = cytoscape({
+      const cy = createCytoscape({
         container: containerRef.current,
         elements,
         style: [
@@ -187,10 +237,12 @@ const NetworkGraph: React.FC<NetworkGraphProps> = ({
               'text-margin-y': 3,
               'border-width': 0.5,
               'border-color': isDark ? '#0C0B0A' : '#F2EDE2',
-              'background-image': (node: any) => {
-                const img = safeImgUrl(node.data('image_url'));
-                return img || 'none';
-              },
+            },
+          },
+          {
+            selector: 'node[image_url]',
+            style: {
+              'background-image': 'data(image_url)',
               'background-fit': 'cover',
             },
           },
@@ -219,7 +271,6 @@ const NetworkGraph: React.FC<NetworkGraphProps> = ({
         layout: { name: 'null' },
         minZoom: 0.05,
         maxZoom: 5,
-        wheelSensitivity: 0.25,
         pixelRatio: 1,
         hideEdgesOnViewport: true,
         textureOnViewport: true,
@@ -231,7 +282,7 @@ const NetworkGraph: React.FC<NetworkGraphProps> = ({
       const layoutOptions = hasCoordinates
         ? {
             name: 'preset',
-            positions: (node: any) => ({ x: node.data('x'), y: node.data('y') }),
+            positions: (node: cytoscape.NodeSingular) => ({ x: node.data('x'), y: node.data('y') }),
             fit: true,
             padding: 40,
           }
@@ -263,7 +314,7 @@ const NetworkGraph: React.FC<NetworkGraphProps> = ({
         setIsRendering(false);
       }
 
-      cy.on('tap', 'node', (evt: any) => {
+      cy.on('tap', 'node', (evt: cytoscape.EventObjectNode) => {
         onNodeSelectRef.current?.(evt.target.id());
       });
     } catch (err) {
@@ -278,13 +329,15 @@ const NetworkGraph: React.FC<NetworkGraphProps> = ({
 
   useEffect(() => {
     mountedRef.current = true;
-    if (isActive && baseDisplayVertices.length > 0) {
+    if (isActive) {
       const timer = setTimeout(() => initGraph(), 50);
       return () => {
         mountedRef.current = false;
         clearTimeout(timer);
         if (cyRef.current) {
-          try { cyRef.current.destroy(); } catch (_) {}
+          try { cyRef.current.destroy(); } catch {
+            // The graph may already have been destroyed by Cytoscape.
+          }
           cyRef.current = null;
         }
       };
@@ -352,6 +405,15 @@ const NetworkGraph: React.FC<NetworkGraphProps> = ({
         </div>
       )}
     </div>
+  );
+};
+
+const NetworkGraph: React.FC<NetworkGraphProps> = (props) => {
+  const resetKey = `${props.vertices.length}:${props.edges.length}:${props.vertices[0]?.id || ''}`;
+  return (
+    <GraphErrorBoundary resetKey={resetKey}>
+      <NetworkGraphCanvas {...props} />
+    </GraphErrorBoundary>
   );
 };
 

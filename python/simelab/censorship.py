@@ -23,7 +23,6 @@ import warnings
 
 import numpy as np
 import networkx as nx
-from scipy.sparse.linalg import eigsh
 
 
 class CensorshipAnalyzer:
@@ -32,36 +31,107 @@ class CensorshipAnalyzer:
     whose removal would fragment the network.
     """
 
-    def __init__(self, G):
+    METHOD_VERSION = 2
+    BETWEENNESS_SAMPLE_LIMIT = 500
+
+    def __init__(self, G, betweenness: Optional[Dict[str, float]] = None):
         self.G = G
         self.is_directed = G.is_directed()
         self.n = G.number_of_nodes()
 
-        # Pre-compute betweenness (use sampling for large graphs)
-        k = min(self.n, 500) if self.n > 500 else None
-        self.betweenness: Dict[str, float] = nx.betweenness_centrality(G, k=k, normalized=True)
+        # Feature engineering already computes this metric in the main server
+        # pipeline. Accept it here to avoid repeating the most expensive graph
+        # traversal; standalone callers still get the original behavior.
+        if betweenness is None:
+            k = min(self.n, 500) if self.n > 500 else None
+            betweenness = nx.betweenness_centrality(G, k=k, normalized=True, seed=42)
+        self.betweenness = betweenness
 
         # Compute the Fiedler value (λ2 of Laplacian) — slow for large graphs
         self.fiedler_value: Optional[float] = None
         self.cvi: Optional[float] = None
+        self.component_count = 0
+        self.largest_component_nodes = 0
+        self.largest_component_share = 0.0
+        self.largest_component_fiedler: Optional[float] = None
+        self.largest_component_normalized_fiedler: Optional[float] = None
+        self.largest_component_max_betweenness: Optional[float] = None
+        self.component_cvi: Optional[float] = None
 
         # Results
         self.structural_holes: List[Tuple[str, float, Dict]] = []
 
     def _compute_fiedler(self) -> float:
-        """Compute the Fiedler value (λ2 of graph Laplacian)."""
+        """Compute documented whole-graph and giant-component connectivity."""
         if self.fiedler_value is not None:
             return self.fiedler_value
 
         try:
             G_undirected = self.G.to_undirected()
-            L = nx.laplacian_matrix(G_undirected).astype(float)
-            # Get 3 smallest eigenvalues
-            eigenvalues = eigsh(L, k=3, which="SM", return_eigenvectors=False, maxiter=500)
-            # λ0 ≈ 0, λ1 = algebraic connectivity (Fiedler), λ2 = next
-            self.fiedler_value = float(eigenvalues[1]) if len(eigenvalues) > 1 else 0.001
+            if G_undirected.number_of_nodes() == 0:
+                self.fiedler_value = 0.0
+                return self.fiedler_value
+
+            components = list(nx.connected_components(G_undirected))
+            self.component_count = len(components)
+            largest_nodes = max(components, key=len)
+            largest = G_undirected.subgraph(largest_nodes).copy()
+            self.largest_component_nodes = largest.number_of_nodes()
+            self.largest_component_share = (
+                self.largest_component_nodes / G_undirected.number_of_nodes()
+            )
+
+            if self.component_count > 1:
+                self.fiedler_value = 0.0
+            elif largest.number_of_nodes() >= 2:
+                self.fiedler_value = float(nx.algebraic_connectivity(
+                    largest, weight=None, normalized=False, tol=1e-10,
+                    method="tracemin_pcg", seed=42,
+                ))
+            else:
+                self.fiedler_value = 0.0
+
+            if largest.number_of_nodes() >= 2:
+                self.largest_component_fiedler = float(nx.algebraic_connectivity(
+                    largest, weight=None, normalized=False, tol=1e-10,
+                    method="tracemin_pcg", seed=42,
+                ))
+                self.largest_component_normalized_fiedler = float(nx.algebraic_connectivity(
+                    largest, weight=None, normalized=True, tol=1e-10,
+                    method="tracemin_pcg", seed=42,
+                ))
+            else:
+                self.largest_component_fiedler = 0.0
+                self.largest_component_normalized_fiedler = 0.0
+
+            if self.component_count == 1:
+                component_betweenness = self.betweenness
+            else:
+                component_graph = self.G.subgraph(largest_nodes).copy()
+                sample_size = (
+                    min(component_graph.number_of_nodes(), self.BETWEENNESS_SAMPLE_LIMIT)
+                    if component_graph.number_of_nodes() > self.BETWEENNESS_SAMPLE_LIMIT
+                    else None
+                )
+                component_betweenness = nx.betweenness_centrality(
+                    component_graph,
+                    k=sample_size,
+                    normalized=True,
+                    weight=None,
+                    seed=42 if sample_size is not None else None,
+                )
+            self.largest_component_max_betweenness = (
+                max(component_betweenness.values()) if component_betweenness else 0.0
+            )
+            if self.largest_component_fiedler > 1e-12:
+                self.component_cvi = (
+                    self.largest_component_max_betweenness
+                    / self.largest_component_fiedler
+                )
+            else:
+                self.component_cvi = None
         except Exception:
-            self.fiedler_value = 0.001  # fallback: near-fragmentation
+            self.fiedler_value = 0.0
 
         return self.fiedler_value
 
@@ -103,8 +173,14 @@ class CensorshipAnalyzer:
         # Sort by SI descending
         impacts.sort(key=lambda x: x["si_score"], reverse=True)
 
-        # Test component impact for top candidates
-        for item in impacts[:min(k * 2, len(impacts))]:
+        # Test component impact only for candidates that can be returned, and
+        # compute the unchanged baseline once instead of once per candidate.
+        if self.is_directed:
+            original_components = nx.number_weakly_connected_components(self.G)
+        else:
+            original_components = nx.number_connected_components(self.G)
+
+        for item in impacts[:min(k, len(impacts))]:
             node = item["node"]
             # How many components if this node is removed?
             G_copy = self.G.copy()
@@ -113,11 +189,6 @@ class CensorshipAnalyzer:
                 n_components = nx.number_weakly_connected_components(G_copy)
             else:
                 n_components = nx.number_connected_components(G_copy)
-
-            if G_copy.is_directed():
-                original_components = nx.number_weakly_connected_components(self.G)
-            else:
-                original_components = nx.number_connected_components(self.G)
 
             item["components_after_removal"] = n_components
             item["component_increase"] = n_components - original_components
@@ -131,14 +202,14 @@ class CensorshipAnalyzer:
 
         return self.structural_holes
 
-    def censorship_vulnerability_index(self) -> float:
+    def censorship_vulnerability_index(self) -> Optional[float]:
         """
         CVI = (1 / λ2) · max(C_B(v))
         High CVI = network is both fragile AND has a single-point-of-failure account.
         """
         fiedler = self._compute_fiedler()
         max_cb = max(self.betweenness.values()) if self.betweenness else 0.0
-        self.cvi = max_cb / max(fiedler, 1e-8)
+        self.cvi = max_cb / fiedler if fiedler > 1e-12 else None
         return self.cvi
 
     def get_critical_nodes(self, threshold: float = 0.1) -> List[str]:
@@ -213,8 +284,19 @@ class CensorshipAnalyzer:
 
         # CVI
         cvi = self.censorship_vulnerability_index()
-        lines.append(f"\nCensorship Vulnerability Index: {cvi:.4f}")
-        if cvi > 100:
+        if cvi is None:
+            lines.append("\nCensorship Vulnerability Index: N/A (network already disconnected)")
+        else:
+            lines.append(f"\nCensorship Vulnerability Index: {cvi:.4f}")
+        if cvi is None:
+            component_value = (
+                f"{self.component_cvi:.6f}" if self.component_cvi is not None else "N/A"
+            )
+            lines.append(
+                f"  Giant component CVI: {component_value} "
+                f"({self.largest_component_share:.1%} node coverage)"
+            )
+        elif cvi > 100:
             lines.append("  🔴 Highly vulnerable — single account removal could fragment network")
         elif cvi > 10:
             lines.append("  🟡 Moderately vulnerable")

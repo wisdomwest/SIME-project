@@ -20,7 +20,7 @@ export function SentimentPage() {
 
 function SentimentView() {
   const { route, updateExtras } = useUrlState();
-  const { pythonDatasetId, graphData } = useSocialData();
+  const { pythonDatasetId, graphData, applySentimentData } = useSocialData();
   const routeDataset = ('datasetId' in route ? (route as { datasetId: string }).datasetId : '') as string;
   const datasetId = pythonDatasetId ?? routeDataset;
   const [data, setData] = useState<SentimentData | null>(null);
@@ -31,12 +31,15 @@ function SentimentView() {
     setLoading(true);
     setError(null);
     getSentiment(datasetId)
-      .then((d) => setData(d))
+      .then((d) => {
+        setData(d);
+        applySentimentData(d);
+      })
       .catch((err) => {
         setError(err instanceof Error ? err.message : 'Failed to fetch sentiment clustering.');
       })
       .finally(() => setLoading(false));
-  }, [datasetId]);
+  }, [datasetId, applySentimentData]);
 
   useEffect(() => {
     loadData();
@@ -77,6 +80,19 @@ function SentimentView() {
   const posPct = (data.clusters.Pos / Math.max(total, 1)) * 100;
   const neuPct = (data.clusters.Neu / Math.max(total, 1)) * 100;
   const negPct = (data.clusters.Neg / Math.max(total, 1)) * 100;
+  const outerShare = (data.clusters.Pos + data.clusters.Neg) / Math.max(total, 1);
+  const silhouetteQuality = data.silhouette == null
+    ? 'Not available'
+    : data.silhouette >= 0.5
+      ? 'Good structural separation'
+      : data.silhouette >= 0.25
+        ? 'Fair — some cluster overlap'
+        : 'Poor — substantial cluster overlap';
+  const centroidQuality = data.centroid_distance >= 0.5
+    ? 'Strong outer-cluster separation'
+    : data.centroid_distance >= 0.2
+      ? 'Moderate outer-cluster separation'
+      : 'Weak outer-cluster separation';
 
   return (
     <div className="px-8 py-10 max-w-[1280px] mx-auto space-y-10">
@@ -93,6 +109,7 @@ function SentimentView() {
           closeness, eigenvector, PageRank, clustering, reciprocity, follower ratio, influence).
           Clusters are then re-labelled: high out-degree + low reciprocity = Negative (broadcasters);
           high reciprocity + high betweenness = Positive (connectors); the rest = Neutral.
+          These are structural-behaviour labels, not text-based emotional sentiment.
         </p>
       </header>
 
@@ -102,23 +119,23 @@ function SentimentView() {
             <StatBlock
               label="Silhouette"
               value={data.silhouette?.toFixed(3) ?? '—'}
-              caption={data.silhouette && data.silhouette > 0.5 ? 'Good structural separation' : 'Fair/poor — clusters overlap'}
-              emphasis={data.silhouette && data.silhouette > 0.5 ? 'pos' : 'ember'}
-              explainer="Silhouette measures how well each point fits in its cluster vs the next-closest. >0.5 is good, <0.3 is poor. If silhouette is low, sentiment from network structure alone is unreliable."
+              caption={`${silhouetteQuality}${data.silhouette_sample_size < total ? ` · sample n=${data.silhouette_sample_size.toLocaleString()}` : ''}`}
+              emphasis={data.silhouette != null && data.silhouette >= 0.5 ? 'pos' : 'ember'}
+              explainer="Mean silhouette coefficient: (b − a) / max(a, b), where a is mean within-cluster distance and b is mean distance to the nearest other cluster. Range −1 to 1; values near 0 indicate overlap. Datasets over 2,000 accounts use a reproducible 2,000-account validation sample."
             />
             <StatBlock
               label="Polarisation"
               value={data.polarization_index.toFixed(3)}
-              caption={`${Math.round(data.polarization_index * 100)}% in extreme clusters`}
+              caption={`${Math.round(outerShare * 100)}% in outer clusters · balance-adjusted`}
               emphasis={data.polarization_index > 0.8 ? 'neg' : 'ink'}
-              explainer="Share of accounts in the Positive or Negative clusters (versus Neutral). High polarisation = few bystanders, everyone has taken a side."
+              explainer="SIMElab balanced two-camp index: 2 × min(Positive, Negative) / Total. It reaches 1 only when the two outer clusters are equally large and there is no neutral cluster; a large but one-sided outer cluster no longer counts as high polarisation."
             />
             <StatBlock
               label="Centroid distance"
               value={data.centroid_distance.toFixed(2)}
-              caption={data.centroid_distance < 1 ? 'Unreliable — one-sided mobilisation' : 'Reliable separation'}
-              emphasis={data.centroid_distance < 1 ? 'ember' : 'pos'}
-              explainer="Euclidean distance between the Positive and Negative cluster centroids in normalised feature space. >3.0 = highly polarised; <1.0 = the structural signals can't tell the camps apart."
+              caption={centroidQuality}
+              emphasis={data.centroid_distance < 0.2 ? 'ember' : data.centroid_distance >= 0.5 ? 'pos' : 'ink'}
+              explainer="Euclidean distance between the two outer-cluster centroids after each of the nine features is scaled to [0, 1], divided by √9. The resulting score is bounded to [0, 1]."
             />
             <StatBlock
               label="Total clustered"

@@ -49,7 +49,7 @@ const AIInsightsPanel: React.FC<AIInsightsPanelProps> = ({ insights, computedMet
     if (!computedMetrics) return;
     const config = getConfig();
     if (!config) {
-      setLlmError('No API key configured. Set your key in the Chat tab settings first.');
+      setLlmError('Server-side LLM is not configured. Add a provider key to the backend environment.');
       return;
     }
 
@@ -80,8 +80,8 @@ const AIInsightsPanel: React.FC<AIInsightsPanelProps> = ({ insights, computedMet
           pythonContext += `- Disinformation Risk Levels: Likely Disinfo: ${disinfo.risk_distribution.likely_disinfo}, Suspicious: ${disinfo.risk_distribution.suspicious}, Clean: ${disinfo.risk_distribution.clean}\n`;
         }
         if (censorship) {
-          pythonContext += `- Censorship Vulnerability Index (CVI): ${censorship.cvi ? censorship.cvi.toFixed(4) : "N/A"}\n`;
-          pythonContext += `- Algebraic Connectivity (Fiedler Value): ${censorship.fiedler_value.toFixed(4)}\n`;
+          pythonContext += `- Whole-network components: ${censorship.component_count}; Fiedler λ2: ${censorship.fiedler_value.toFixed(4)}; CVI: ${censorship.cvi != null ? censorship.cvi.toFixed(4) : "N/A (disconnected)"}\n`;
+          pythonContext += `- Giant component: ${(censorship.largest_component_share * 100).toFixed(1)}% of nodes; Fiedler λ2: ${censorship.largest_component_fiedler?.toFixed(4) ?? "N/A"}; component CVI: ${censorship.component_cvi?.toFixed(6) ?? "N/A"}\n`;
           pythonContext += `- Key Structural Holes: ${censorship.structural_holes.slice(0, 3).map(sh => `@${sh.node} (SI: ${sh.si_score.toFixed(3)})`).join(', ')}\n`;
         }
         if (hashtags) {
