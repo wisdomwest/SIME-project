@@ -193,7 +193,7 @@ const FEATURES = [
   },
   {
     title: 'Sentiment from structure',
-    body: 'k-means on nine network dimensions labels each account Positive, Neutral, or Negative — without reading a single tweet.',
+    body: 'k-means on nine network dimensions labels each account Connector, Neutral, or Broadcaster — without reading a single tweet.',
     icon: Hash,
   },
   {

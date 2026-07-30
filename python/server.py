@@ -138,9 +138,6 @@ app.add_middleware(
 # In-memory analysis cache: dataset_id → {G, meta, fe, sa, da, ca, ha}
 analyses: dict = {}
 
-# Default dataset (RejectFinanceBill2024)
-DEFAULT_DATASET = str(WORKSPACE_ROOT / "RejectFinanceBill2024.xlsx")
-
 # Persistent uploads directory — files must survive beyond the request so
 # long-running endpoints like /drift can re-open them.
 UPLOADS_DIR = WORKSPACE_ROOT / "files" / "uploads"
@@ -365,11 +362,17 @@ def _call_llm(user_question: str, context: str) -> str:
 def _run_full_analysis(filepath: str, dataset_id: str, source_hash: Optional[str] = None) -> dict:
     """Run the full analysis pipeline on a file. Returns state dict."""
     timings = {}
+    def stage(message: str) -> None:
+        print(f"  [analysis:{dataset_id}] {message}", flush=True)
+
+    stage(f"loading {Path(filepath).name}...")
     started = time.perf_counter()
     G, meta = load_nodexl(filepath)
     timings["load"] = time.perf_counter() - started
+    stage(f"loaded {G.number_of_nodes():,} nodes and {G.number_of_edges():,} edges")
     meta["source_hash"] = source_hash or _hash_file(Path(filepath))
 
+    stage("computing network features...")
     started = time.perf_counter()
     fe = FeatureEngineer(G)
     fe.build_matrix()
@@ -386,6 +389,7 @@ def _run_full_analysis(filepath: str, dataset_id: str, source_hash: Optional[str
         attrs["clustering_coefficient"] = features["clustering_coefficient"]
     timings["features"] = time.perf_counter() - started
 
+    stage("computing structural sentiment clusters...")
     started = time.perf_counter()
     sa = SentimentAnalyzer(fe)
     sa.fit()
@@ -397,6 +401,7 @@ def _run_full_analysis(filepath: str, dataset_id: str, source_hash: Optional[str
 
     meta.setdefault("overall_metrics", {})
     meta["overall_metrics"].update({
+        "feature_method_version": FeatureEngineer.METHOD_VERSION,
         "sentiment_silhouette": sa.silhouette,
         "sentiment_silhouette_sample_size": sa.silhouette_sample_size,
         "polarization_index": sa.polarization_index(),
@@ -404,11 +409,13 @@ def _run_full_analysis(filepath: str, dataset_id: str, source_hash: Optional[str
         "sentiment_method_version": SentimentAnalyzer.METHOD_VERSION,
     })
 
+    stage("computing disinformation scores...")
     started = time.perf_counter()
     da = DisinformationAnalyzer(G, fe)
     da.score_all()
     timings["disinformation"] = time.perf_counter() - started
 
+    stage("computing censorship vulnerability...")
     started = time.perf_counter()
     # Betweenness is already the second feature dimension. Reuse it instead of
     # running the same sampled all-pairs computation a second time.
@@ -427,6 +434,7 @@ def _run_full_analysis(filepath: str, dataset_id: str, source_hash: Optional[str
     # complete XLSX scan on every upload.
     edges_df = meta.pop("_edges_df", None)
 
+    stage("computing hashtag analysis...")
     started = time.perf_counter()
     from simelab.hashtag import HashtagAnalyzer
     ha = HashtagAnalyzer(G, edges_df)
@@ -457,6 +465,7 @@ def _run_full_analysis(filepath: str, dataset_id: str, source_hash: Optional[str
 
     # Redis is a restore cache only. Uploads always execute this full pipeline.
     _save_analysis_to_cache(dataset_id, state)
+    stage("complete and cached")
 
     return state
 
@@ -534,6 +543,12 @@ def _load_analysis_from_cache(dataset_id: str) -> Optional[dict]:
                 meta["overall_metrics"] = json.loads(meta_row["overall_metrics_json"])
             except Exception:
                 pass
+
+        # Cached feature values produced before NodeXL raw betweenness counts
+        # were normalized are not safe to reuse. Returning None makes startup
+        # fall back to the persisted upload file and rebuild the analysis.
+        if meta.get("overall_metrics", {}).get("feature_method_version") != FeatureEngineer.METHOD_VERSION:
+            return None
 
         # 2. Reconstruct G
         G = nx.DiGraph()
@@ -1001,7 +1016,7 @@ async def health():
         "loaded_datasets": list(analyses.keys()),
         "cached_datasets": cached_ids,
         "redis": cache_status(),
-        "default_dataset": os.path.basename(DEFAULT_DATASET),
+        "default_dataset": None,
     }
 
 
@@ -1670,7 +1685,6 @@ async def download_file(token: str, filename: str):
 if __name__ == "__main__":
     port = int(os.environ.get("SIMELAB_PORT", "8000"))
     print(f"SIMElab API starting on http://localhost:{port}")
-    print(f"Default dataset: {DEFAULT_DATASET}")
 
     # ── Auto-restore datasets from Redis on startup (async) ─────────────
     # Run in a background thread so uvicorn starts immediately.
@@ -1703,27 +1717,6 @@ if __name__ == "__main__":
         threading.Thread(target=_recover, daemon=True).start()
     else:
         print("  No cached datasets in Redis (fresh start).")
-
-    # Optional pre-load via env var
-    if os.environ.get("SIMELAB_PRELOAD") == "1" and os.path.exists(DEFAULT_DATASET):
-        if "default" not in analyses:
-            print("Pre-loading default dataset in background...")
-            import threading
-            def _preload():
-                try:
-                    state = _load_analysis_from_cache("default")
-                    if state:
-                        print("  Default dataset loaded from Redis.")
-                        return
-                    _run_full_analysis(DEFAULT_DATASET, "default")
-                    print("  Default dataset loaded from file.")
-                except Exception as e:
-                    print(f"  Warning: Could not pre-load default: {e}")
-            threading.Thread(target=_preload, daemon=True).start()
-        else:
-            print("  Default dataset already recovered from Redis.")
-    else:
-        print("  Default dataset will lazy-load on first request.")
 
     host = os.environ.get("SIMELAB_HOST", "127.0.0.1")
     uvicorn.run(app, host=host, port=port)

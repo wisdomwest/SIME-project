@@ -2,7 +2,7 @@ import { useState, useCallback, useMemo, createContext, useContext, ReactNode, c
 import { GraphData } from '../engine/csvParserEnhanced';
 import { ComputedMetrics } from '../engine/graphMetrics';
 import { AIInsights } from '../engine/aiInsights';
-import { uploadFile, getSentiment, getDisinformation, getAnalysisData, SentimentData } from '../services/pythonApi';
+import { uploadFile, getHealth, getSentiment, getDisinformation, getAnalysisData, SentimentData } from '../services/pythonApi';
 import { loadSession, saveSession, clearSession } from '../services/db';
 
 export interface ChatMessage {
@@ -151,10 +151,15 @@ const useSocialDataState = () => {
   useEffect(() => {
     if (!pythonDatasetId) return;
     if (pyRestoreRef.current) return;
-    pyRestoreRef.current = true;
     // Small delay to let all restored state settle
     const t = setTimeout(async () => {
       try {
+        // IndexedDB can outlive the Python process/Redis cache. Do not issue
+        // feature requests for a stale restored dataset; a new upload will
+        // set a fresh dataset id and run the normal analysis flow.
+        const health = await getHealth();
+        if (!health.loaded_datasets.includes(pythonDatasetId)) return;
+        pyRestoreRef.current = true;
         const [sentiment, disinfo] = await Promise.all([
           getSentiment(pythonDatasetId),
           getDisinformation(pythonDatasetId),

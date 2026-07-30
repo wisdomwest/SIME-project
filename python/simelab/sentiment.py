@@ -65,7 +65,7 @@ class SentimentAnalyzer:
 
         # Normalize features to [0, 1]
         self.scaler = MinMaxScaler()
-        self.X_norm = self.scaler.fit_transform(self.matrix)
+        self.X_norm = self.scaler.fit_transform(self.matrix) if self.n else np.empty((0, self.matrix.shape[1]))
 
         # Results
         self.kmeans: Optional[KMeans] = None
@@ -87,6 +87,17 @@ class SentimentAnalyzer:
         Returns:
             Dict mapping node name → "Pos" | "Neu" | "Neg"
         """
+        if self.n == 0:
+            self.labels = {}
+            self.cluster_ids = np.array([], dtype=int)
+            self.centroids = np.empty((0, self.matrix.shape[1]))
+            self.cluster_sizes = {"Pos": 0, "Neu": 0, "Neg": 0}
+            return self.labels
+
+        # KMeans cannot fit more clusters than nodes. This also keeps tiny
+        # valid CSV uploads from failing the entire upload request.
+        k = max(1, min(k, self.n))
+
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             self.kmeans = KMeans(n_clusters=k, init="k-means++", n_init=10,

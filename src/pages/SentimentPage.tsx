@@ -9,6 +9,7 @@ import { PythonOnlyWrap } from '../components/layout/BackendOffline';
 import { SentimentData, getSentiment } from '../services/pythonApi';
 import { useEffect, useState, useCallback } from 'react';
 import { Loader2, ArrowUpRight, AlertTriangle } from 'lucide-react';
+import { sentimentLabel } from '../app/format';
 
 export function SentimentPage() {
   return (
@@ -107,8 +108,8 @@ function SentimentView() {
         <p className="text-base text-ink-soft max-w-2xl leading-relaxed">
           Each account is grouped with k-means++ on nine network dimensions (degree, betweenness,
           closeness, eigenvector, PageRank, clustering, reciprocity, follower ratio, influence).
-          Clusters are then re-labelled: high out-degree + low reciprocity = Negative (broadcasters);
-          high reciprocity + high betweenness = Positive (connectors); the rest = Neutral.
+          Clusters are then re-labelled: high out-degree + low reciprocity = Broadcaster;
+          high reciprocity + high betweenness = Connector; the rest = Neutral.
           These are structural-behaviour labels, not text-based emotional sentiment.
         </p>
       </header>
@@ -128,7 +129,7 @@ function SentimentView() {
               value={data.polarization_index.toFixed(3)}
               caption={`${Math.round(outerShare * 100)}% in outer clusters · balance-adjusted`}
               emphasis={data.polarization_index > 0.8 ? 'neg' : 'ink'}
-              explainer="SIMElab balanced two-camp index: 2 × min(Positive, Negative) / Total. It reaches 1 only when the two outer clusters are equally large and there is no neutral cluster; a large but one-sided outer cluster no longer counts as high polarisation."
+              explainer="SIMElab balanced two-camp index: 2 × min(Connector, Broadcaster) / Total. It reaches 1 only when the two outer clusters are equally large and there is no neutral cluster; a large but one-sided outer cluster no longer counts as high polarisation."
             />
             <StatBlock
               label="Centroid distance"
@@ -149,7 +150,7 @@ function SentimentView() {
       <Panel
         eyebrow={<Eyebrow>Distribution</Eyebrow>}
         title="Sentiment composition"
-        description="Stacked by node count. Negative accounts are typically the loudest and most active — they broadcast more than they receive — so even a small percentage can dominate the timeline."
+        description="Stacked by node count. Broadcaster accounts are typically the loudest and most active — they broadcast more than they receive — so even a small percentage can dominate the timeline."
       >
         <div className="space-y-4">
           <div className="flex h-10 w-full border border-rule overflow-hidden">
@@ -164,9 +165,9 @@ function SentimentView() {
             </div>
           </div>
           <div className="grid grid-cols-3 gap-4 pt-2">
-            <Cluster label="Positive" tone="pos" count={data.clusters.Pos} total={total} body="High reciprocity + betweenness. Genuine connectors." />
+            <Cluster label="Connector" tone="pos" count={data.clusters.Pos} total={total} body="High reciprocity + betweenness. Genuine connectors." />
             <Cluster label="Neutral" tone="neu" count={data.clusters.Neu} total={total} body="Balanced metrics. Observers and lurkers." />
-            <Cluster label="Negative" tone="neg" count={data.clusters.Neg} total={total} body="High out-degree, low reciprocity. Broadcasters." />
+            <Cluster label="Broadcaster" tone="neg" count={data.clusters.Neg} total={total} body="High out-degree, low reciprocity. Broadcast-heavy accounts." />
           </div>
         </div>
       </Panel>
@@ -190,7 +191,7 @@ function SentimentView() {
                   <div className="flex items-center gap-2">
                     <span className="text-ink">@{l.node}</span>
                     <Chip tone={l.sentiment === 'Pos' ? 'pos' : l.sentiment === 'Neg' ? 'neg' : 'neu'}>
-                      {l.sentiment}
+                      {sentimentLabel(l.sentiment)}
                     </Chip>
                   </div>
                 ),

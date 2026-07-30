@@ -2,6 +2,7 @@ import { useState, useRef, useMemo } from 'react';
 import { useUrlState } from '../../app/useUrlState';
 import { useSocialData } from '../../hooks/useSocialData';
 import { FilterState } from '../../hooks/useSocialData';
+import { sentimentLabel } from '../../app/format';
 import { Eyebrow } from '../primitives/Eyebrow';
 import { Chip, ChipTone } from '../primitives/Chip';
 import { Calendar, RotateCcw, Upload } from 'lucide-react';
@@ -167,7 +168,7 @@ export function Sidebar({ hasData }: { hasData: boolean }) {
                     )
                   }
                 >
-                  <Chip tone={on ? SENTIMENT_TONE[s] : 'ghost'}>{s}</Chip>
+                  <Chip tone={on ? SENTIMENT_TONE[s] : 'ghost'}>{sentimentLabel(s)}</Chip>
                 </button>
               );
             })}

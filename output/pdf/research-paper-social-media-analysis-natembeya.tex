@@ -1,0 +1,236 @@
+\documentclass[11pt]{article}
+\usepackage[letterpaper,margin=0.78in]{geometry}
+\usepackage{amsmath,amssymb,booktabs,longtable,array,enumitem,xcolor,hyperref,microtype}
+\definecolor{simblue}{HTML}{064B8C}
+\definecolor{simgray}{HTML}{555555}
+\hypersetup{colorlinks=true,linkcolor=simblue,citecolor=simblue,urlcolor=simblue,pdfauthor={Harmony Wisdom, SIMElab Africa},pdftitle={Social Media Network Analysis in a Kenyan Political Discourse}}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{5pt}
+\setlist{itemsep=2pt,topsep=3pt}
+\newcommand{\Nat}{\textit{Natembeya}}
+\newcommand{\SIMElab}{SIMElab Africa}
+\title{\textbf{Social Media Network Analysis in a Kenyan Political Discourse}\vspace{3pt}\\
+\large A reproducible case study of the Natembeya NodeXL dataset}
+\author{\SIMElab\\ Harmony Wisdom}
+\date{28 July 2026}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+This paper applies the SIMElab social-media analysis framework to the Natembeya NodeXL dataset, a snapshot of political discourse associated with Western Kenya. The analysed directed graph contains 9,258 accounts and 22,149 interactions. The network is sparse ($\rho=0.0002584$), has low reciprocity ($r=0.01436$), and consists of 78 weakly connected components, although 9,065 accounts (97.92\%) belong to the largest component. Network-feature clustering assigns 4,074 accounts to the negative/broadcasting profile, 3,578 to the neutral/observational profile, and 1,606 to the positive/reciprocal profile. The silhouette score is 0.4126, indicating useful but moderate separation rather than a validated psychological sentiment label. The five-signal structural disinformation score has mean 0.5407; 4,927 accounts (53.22\%) cross the ``likely disinformation'' threshold of 0.60 under the model. Hashtag analysis identifies 333 lifecycle terms, 147 authenticity-scored hashtags, and an artificial-ratio estimate of 0.3197. These values describe structural risk and discourse organization, not proof of malicious intent. The results indicate a large, broadcast-oriented conversation with a highly connected core, peripheral fragmentation, substantial structural polarization, and broad exposure to accounts whose network signatures merit human review.
+\end{abstract}
+
+\textbf{Keywords:} social network analysis; Kenya; political communication; NodeXL; k-means; disinformation screening; structural vulnerability; hashtag lifecycle
+
+\tableofcontents
+\newpage
+
+\section{Introduction}
+
+Online political conversations are not only collections of texts. They are interaction systems in which accounts, retweets, mentions, and replies create measurable pathways for attention and influence. A social graph can therefore reveal broadcast concentration, weak or strong engagement, community separation, and possible coordination even when text is incomplete or multilingual.
+
+This revised paper applies the SIMElab framework to \Nat{}, replacing the earlier RejectFinanceBill2024 case study. The aim is descriptive and diagnostic: to quantify the structure of the observed conversation, identify accounts and patterns that deserve further investigation, and translate the numerical results into cautious scientific claims. A model flag is not treated as a finding of deception, censorship, or illegality.
+
+The study asks five questions:
+\begin{enumerate}
+  \item How large, sparse, reciprocal, and fragmented is the observed interaction network?
+  \item Do network-feature clusters provide a useful structural proxy for discourse orientation?
+  \item How many accounts exhibit elevated values on the five structural disinformation signals?
+  \item Which connectivity properties make the conversation vulnerable to the loss of bridge accounts?
+  \item What do hashtag lifecycle and authenticity scores imply about topical competition and possible artificial amplification?
+\end{enumerate}
+
+\section{Dataset and reproducibility}
+
+The source file is \texttt{Natembeya.xlsx}, a NodeXL-format workbook. The backend loads the Edges sheet into a directed graph and uses the Vertices sheet where account metadata are available. The completed Natembeya analysis was persisted by the application cache under dataset identifier \texttt{Natembeya}; the values reported here follow the same variables exposed by the SIMElab backend and its Redis serialization schema.
+
+\begin{table}[h]
+\centering
+\caption{Natembeya graph description from the analysis pipeline.}
+\begin{tabular}{lr}
+\toprule
+Measure & Value\\
+\midrule
+Accounts (vertices) & 9,258\\
+Interactions (directed edges) & 22,149\\
+Density $\rho=E/[N(N-1)]$ & 0.0002584\\
+Mean total degree $2E/N$ & 4.7853\\
+Reciprocity & 0.01436\\
+Weakly connected components & 78\\
+Largest component & 9,065 accounts (97.92\%)\\
+Retweet edges & 12,768\\
+Mention edges & 3,569\\
+Reply edges & 2,614\\
+Mentions-in-retweet edges & 3,198\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The edge-type counts sum to the 22,149 observed interactions. The graph is therefore not a simple retweet-only network: mentions, replies, and embedded mentions contribute materially to the observed structure.
+
+\section{Mathematical framework}
+
+\subsection{Network structure}
+For a directed graph $G=(V,E)$ with $N=|V|$ accounts and $E=|E|$ interactions, density is
+\begin{equation}
+\rho=\frac{E}{N(N-1)}.
+\end{equation}
+The mean total degree is $2E/N$; the mean in-degree and mean out-degree are each $E/N$ when summed over all vertices. Reciprocity is the share of directed ties that participate in a mutual relation. Weak connected components ignore edge direction and show whether the conversation separates into isolated interaction regions.
+
+\subsection{Network-feature clustering}
+Each account is represented by a nine-dimensional feature vector containing degree, in-degree, out-degree, betweenness, closeness, eigenvector centrality, PageRank, clustering coefficient, and a reciprocity/follower-related feature when available. Each feature is min-max scaled:
+\begin{equation}
+\hat{x}_{ij}=\frac{x_{ij}-\min(x_j)}{\max(x_j)-\min(x_j)}.
+\end{equation}
+K-means++ with $k=3$ clusters minimizes
+\begin{equation}
+J=\sum_{j=1}^{3}\sum_{x_i\in S_j}\lVert x_i-\mu_j\rVert_2^2.
+\end{equation}
+Clusters are labelled Pos, Neu, and Neg by their structural profiles: reciprocal/connective, observational/bridging, and broadcast-heavy respectively. These labels are model interpretations, not human-coded sentiment.
+
+The silhouette coefficient for account $i$ is
+\begin{equation}
+s_i=\frac{b_i-a_i}{\max(a_i,b_i)},
+\end{equation}
+where $a_i$ is mean within-cluster distance and $b_i$ is the smallest mean distance to another cluster. The reported silhouette is computed on a reproducible sample of 2,000 accounts.
+
+\subsection{Five-signal disinformation screening}
+The model combines five normalized structural signals:
+\begin{equation}
+D(v)=0.25A_1(v)+0.15A_2(v)+0.30A_3(v)+0.15A_4(v)+0.15A_5(v).
+\end{equation}
+$A_1$ is retweet amplification relative to followers, $A_2$ is temporal regularity, $A_3$ is a broadcast-position anomaly, $A_4$ is the within-community echo-chamber fraction, and $A_5$ is follower-network sparsity. The implementation classifies $D<0.35$ as clean, $0.35\leq D<0.60$ as suspicious, and $D\geq0.60$ as likely disinformation. Because these are heuristic thresholds, the class name means ``requires scrutiny under this model,'' not ``proven disinformation.''
+
+\subsection{Connectivity and censorship vulnerability}
+For the undirected projection, the Laplacian is $L=D-A$ and algebraic connectivity is its second-smallest eigenvalue $\lambda_2(L)$. The censorship vulnerability index is defined as
+\begin{equation}
+\mathrm{CVI}=\frac{\max_v C_B(v)}{\lambda_2(L)}.
+\end{equation}
+When the observed graph is already disconnected, $\lambda_2(L)=0$ for the full graph and CVI is undefined. This is not a computational failure; it is the mathematically correct indication that the network has no single connected backbone at the whole-graph level. Structural-hole scores still rank accounts by
+\begin{equation}
+\mathrm{SI}(v)=C_B(v)\log(\deg(v)+1).
+\end{equation}
+
+\subsection{Hashtag lifecycle and authenticity}
+Hashtags are assigned lifecycle states from observed usage patterns: Birth, Growth, Peak, and Decay. For hashtags with enough account-level observations, a seven-feature authenticity model estimates whether propagation is more consistent with organic participation or artificial amplification. The artificial ratio is the share of scored hashtags classified as artificial or otherwise non-organic by the model.
+
+\section{Implementation and data quality}
+
+The pipeline is implemented in Python using NetworkX, NumPy, pandas, and scikit-learn, with a FastAPI interface and Redis persistence. The frontend reads already computed values; it does not recalculate the scientific metrics. This separation is important because a Redis-restored result must preserve the same graph statistics, feature versions, sentiment metadata, disinformation scores, hashtag records, and structural-hole records generated at analysis time.
+
+The Natembeya workbook contains heterogeneous edge types and a large number of topical hashtags. Consequently, the graph captures a mixed political and public-discourse environment rather than a single-purpose protest stream. This affects interpretation: a high risk score may reflect broadcast behavior, sparse profiles, or highly regular interaction rather than a false claim.
+
+\section{Results}
+
+\subsection{Observed network structure}
+The Natembeya graph has 9,258 accounts and 22,149 directed interactions. Substitution into the density equation gives
+\[
+\rho=\frac{22,149}{9,258\times9,257}=0.0002584.
+\]
+The mean total degree is $2(22,149)/9,258=4.7853$. Reciprocity is only 0.01436, meaning that mutual two-way relations are uncommon relative to all directed ties. The current pipeline identifies 78 weakly connected components. The largest contains 9,065 accounts, or 97.92\% of all accounts, while the remaining components contain 193 accounts in aggregate.
+
+The graph is therefore simultaneously centralized at the macro level and fragmented at the periphery: almost everyone lies in one giant weak component, but most relations are absent and mutual conversation is rare. The edge mix is dominated by retweets (12,768; 57.65\%), followed by mentions-in-retweets (3,198; 14.44\%), direct mentions (3,569; 16.11\%), and replies (2,614; 11.80\%).
+
+\subsection{Structural sentiment profiles}
+\begin{table}[h]
+\centering
+\caption{K-means structural profiles for Natembeya.}
+\begin{tabular}{lrrr}
+\toprule
+Profile & Accounts & Share & Interpretation\\
+\midrule
+Neg & 4,074 & 43.99\% & Broadcast-heavy / low reciprocity\\
+Neu & 3,578 & 38.64\% & Observational or connective\\
+Pos & 1,606 & 17.35\% & More reciprocal / connective\\
+\midrule
+Total & 9,258 & 100.00\% & \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The silhouette coefficient is 0.4126 on the 2,000-account validation sample. The polarization index is 0.3469 and the centroid distance is 0.1735. These values indicate meaningful structural differentiation, but not cleanly separated latent sentiment states. The negative profile is the largest, yet the result should be read as a predominance of broadcast-oriented network behavior, not as proof that 43.99\% of accounts expressed negative emotion.
+
+\subsection{Five-signal disinformation screening}
+\begin{table}[h]
+\centering
+\caption{Natembeya composite disinformation-score distribution.}
+\begin{tabular}{lrr}
+\toprule
+Risk band & Accounts & Share\\
+\midrule
+Clean ($D<0.35$) & 2,771 & 29.93\%\\
+Suspicious ($0.35\le D<0.60$) & 1,560 & 16.85\%\\
+Likely disinformation ($D\ge0.60$) & 4,927 & 53.22\%\\
+\midrule
+Total & 9,258 & 100.00\%\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Across all accounts, $\bar{D}=0.5407$, $\mathrm{SD}(D)=0.1962$, the minimum is 0.1515, and the maximum is 0.9250. The high upper tail reflects the model's structural signals, particularly broadcast-position anomaly, sparse local connectivity, and community concentration. It does not establish that the flagged accounts coordinated with one another or intentionally distributed false information.
+
+\subsection{Connectivity and censorship indicators}
+Because the observed graph has multiple weak components, the full-graph Fiedler value is $\lambda_2(L)=0$. The full-graph CVI is consequently undefined under the stated formula. Scientifically, the result says that the full network is already disconnected before any hypothetical account removal; a single global ``fragility'' number would be misleading. The appropriate next step is component-level spectral analysis and longitudinal snapshot comparison.
+
+The structural-hole module still evaluates the top 20 accounts by structural impact. These candidates are suitable for review because a disappearance, suspension, or sudden inactivity involving a high-impact bridge could alter how information moves between communities. A single snapshot cannot distinguish platform censorship from ordinary user inactivity, data-collection bias, or account renaming.
+
+\subsection{Hashtag lifecycle and authenticity}
+The lifecycle module identifies 333 hashtag terms: 276 in Birth, 55 at Peak, 1 in Growth, and 1 in Decay. Of these, 147 have sufficient observations for authenticity scoring. The artificial-ratio estimate is 0.3197, or approximately 31.97\% of the scored hashtag set. The most strongly organic-scored examples include \texttt{goodmorningkenya} (0.785), \texttt{alshabaab} (0.7459), \texttt{shambandiobest} (0.7305), and \texttt{endbanditry} (0.7158).
+
+The large Birth count and small Growth/Decay counts suggest that the workbook contains many low-frequency or newly observed terms rather than a single clean lifecycle for one hashtag. This pattern is consistent with topical competition, news spillover, commercial or entertainment content, and noisy hashtag extraction. It should not be interpreted as evidence that every Birth hashtag represents a new political narrative.
+
+\section{Scientific interpretation: what the results tell us}
+
+\subsection{The conversation is broad in reach but shallow in reciprocity}
+The giant component covers 97.92\% of accounts, so the conversation is not made of many completely isolated publics. However, the density of 0.0002584 and reciprocity of 0.01436 indicate that most possible ties are absent and most observed ties are not reciprocated. The most defensible interpretation is a broadcast-oriented attention system: information can reach a large connected population through a small number of pathways, while sustained two-way exchange is limited.
+
+For monitoring, this means that volume alone may exaggerate apparent consensus. A widely retweeted message can make a discourse look socially unified even when the underlying network contains little mutual engagement. Analysts should therefore report unique authors, edge direction, and bridge structure alongside interaction counts.
+
+\subsection{The dominant structural profile is not automatically negative sentiment}
+The 4,074-account Neg cluster is an important signal about network form, not a direct measurement of emotion. Its label follows the model's association between broadcasting and negative/protest-oriented behavior. The silhouette score of 0.4126 supports a moderate separation of structural profiles, while the centroid distance of 0.1735 cautions that the profiles are relatively close in normalized feature space. The proper scientific claim is that Natembeya contains a large broadcast-heavy behavioral segment that merits text-based validation, not that nearly half the accounts are emotionally negative.
+
+\subsection{The disinformation model is sensitive and should be used for triage}
+More than half of accounts cross the model's 0.60 threshold. That is a high screening rate. It can mean that the dataset contains substantial structural irregularity, but it can also mean that the threshold is permissive for this network, that missing metadata default to neutral values, or that ordinary political broadcast behavior resembles the model's disinformation signature. The result is most useful for prioritizing review: compare flagged accounts with posting timelines, repeated text, source domains, profile histories, and human-coded labels. Without those checks, the 53.22\% figure is a model output rather than a prevalence estimate.
+
+\subsection{Fragmentation changes the meaning of censorship risk}
+The zero whole-network Fiedler value is a structural fact produced by disconnectedness. It does not say that censorship occurred. It says that the graph-level algebraic-connectivity test cannot summarize a disconnected network as if it had one coherent backbone. Component-level Fiedler values, repeated snapshots, and disappeared-node tests are required before making a censorship claim. In practical terms, a bridge account in the giant component may be more consequential than a high-degree account inside a small peripheral component.
+
+\subsection{Hashtag diversity suggests a mixed information environment}
+The 333 lifecycle terms and 31.97\% artificial-ratio estimate indicate that the Natembeya workbook contains a mixed topical environment. Political, security, lifestyle, commercial, sports, and entertainment terms appear together. This is analytically valuable because it exposes narrative competition and spillover, but it also lowers the validity of treating every hashtag as part of one homogeneous campaign. Future work should segment hashtags by topic and time before comparing lifecycle curves.
+
+\section{Implications for researchers and practitioners}
+
+The results support four operational uses:
+\begin{enumerate}
+  \item \textbf{Early-warning triage:} review the highest structural-impact accounts and the highest disinformation-score accounts first, then validate them with content and temporal evidence.
+  \item \textbf{Narrative monitoring:} track the 55 peak hashtags and compare their author composition, edge types, and text over time rather than relying on total volume.
+  \item \textbf{Community resilience:} identify alternative bridges between the giant component and peripheral components so that interpretation does not depend on one account.
+  \item \textbf{Model calibration:} annotate at least 200 accounts across all three structural clusters and all risk bands; use precision, recall, calibration curves, and inter-rater agreement before making prevalence claims.
+\end{enumerate}
+
+\section{Limitations}
+
+First, the dataset is a NodeXL snapshot and cannot establish temporal causality. Second, network-feature sentiment is an inferred structural proxy and has no human sentiment ground truth in this analysis. Third, the disinformation score is heuristic and uses several metadata-dependent signals; missing or default metadata can shift scores. Fourth, a single snapshot cannot distinguish censorship from normal account turnover, platform moderation, or collection failure. Fifth, the hashtag extractor produces many noisy and low-frequency terms, so lifecycle counts should not be interpreted as counts of independent narratives. Finally, the reported values describe the collected workbook, not the full population of Kenyan online political communication.
+
+\section{Conclusion}
+
+Replacing the former case study with Natembeya changes the empirical story. The observed network is large and dominated by retweet-like broadcasting, yet almost all accounts still lie in one giant weak component. Mutual exchange is scarce, structural profiles are moderately separable, the heuristic disinformation screen flags a large share of accounts, and hashtag activity is broad and noisy. The central scientific conclusion is not that Natembeya is wholly coordinated or wholly organic. It is that the discourse combines wide reach, low reciprocity, peripheral fragmentation, and structural patterns that require targeted validation.
+
+The SIMElab framework is most valuable as a reproducible measurement and triage system. Its numbers show where to look, which accounts or components may matter, and which narratives deserve longitudinal and human-coded follow-up. They become evidence about misinformation, co-optation, or censorship only when combined with content, timing, provenance, and independent validation.
+
+\section*{Data and computation note}
+All numerical values in this revision were generated from the Natembeya workbook using the SIMElab backend variables and calculation definitions: graph statistics, nine-dimensional feature matrix, k-means sentiment clustering, five-signal disinformation scoring, structural-hole analysis, and hashtag lifecycle/authenticity analysis. The application persisted the completed dataset under Redis identifier \texttt{Natembeya}; the paper reports the serialized analysis variables rather than frontend approximations.
+
+\begin{thebibliography}{9}
+\bibitem{granovetter} Granovetter, M. S. (1973). The strength of weak ties. \textit{American Journal of Sociology}, 78(6), 1360--1380.
+\bibitem{barabasi} Barabasi, A.-L., \& Albert, R. (1999). Emergence of scaling in random networks. \textit{Science}, 286(5439), 509--512.
+\bibitem{goffman} Goffman, E. (1974). \textit{Frame Analysis}. Harvard University Press.
+\bibitem{brandes} Brandes, U. (2001). A faster algorithm for betweenness centrality. \textit{Journal of Mathematical Sociology}, 25(2), 163--177.
+\bibitem{blondel} Blondel, V. D., Guillaume, J.-L., Lambiotte, R., \& Lefebvre, E. (2008). Fast unfolding of communities in large networks. \textit{Journal of Statistical Mechanics}, 2008(10), P10008.
+\bibitem{macqueen} MacQueen, J. (1967). Some methods for classification and analysis of multivariate observations. In \textit{Proceedings of the Fifth Berkeley Symposium}, 281--297.
+\bibitem{rousseeuw} Rousseeuw, P. J. (1987). Silhouettes: A graphical aid to the interpretation and validation of cluster analysis. \textit{Journal of Computational and Applied Mathematics}, 20, 53--65.
+\bibitem{watts} Watts, D. J., \& Strogatz, S. H. (1998). Collective dynamics of small-world networks. \textit{Nature}, 393, 440--442.
+\end{thebibliography}
+
+\end{document}

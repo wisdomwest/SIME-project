@@ -3,7 +3,7 @@ import { useUrlState } from '../app/useUrlState';
 import { Eyebrow } from '../components/primitives/Eyebrow';
 import { StatBlock } from '../components/primitives/StatBlock';
 import { Chip } from '../components/primitives/Chip';
-import { formatNumber, sentimentTone } from '../app/format';
+import { formatNumber, sentimentLabel, sentimentTone } from '../app/format';
 import { Button } from '../components/primitives/Button';
 import { Printer } from 'lucide-react';
 
@@ -96,7 +96,7 @@ export function ReportPage() {
                   <td className="py-2 text-right font-mono text-ink-soft">{v.pagerank.toFixed(4)}</td>
                   <td className="py-2 text-right font-mono text-ink-soft">{v.betweenness.toFixed(4)}</td>
                   <td className="py-2 text-right">
-                    <Chip tone={sentimentTone(v.sentiment)}>{v.sentiment}</Chip>
+                    <Chip tone={sentimentTone(v.sentiment)}>{sentimentLabel(v.sentiment)}</Chip>
                   </td>
                 </tr>
               ))}
@@ -199,8 +199,8 @@ export function ReportPage() {
             </p>
             <p>
               <strong className="text-ink">Sentiment.</strong> k-means++ on the nine-dimensional feature
-              vector with k=3. Clusters are re-labelled: high out-degree + low reciprocity → Negative;
-              high reciprocity + high betweenness → Positive; remainder → Neutral.
+              vector with k=3. Clusters are re-labelled: high out-degree + low reciprocity → Broadcaster;
+              high reciprocity + high betweenness → Connector; remainder → Neutral.
             </p>
             <p>
               <strong className="text-ink">Censorship indicators.</strong> Fiedler value (λ₂ of graph

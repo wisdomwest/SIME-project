@@ -2,6 +2,10 @@ import Graph from 'graphology';
 import louvain from 'graphology-communities-louvain';
 import { Vertex, Edge } from './csvParserEnhanced';
 
+function structuralLabel(sentiment: string): string {
+  return sentiment === 'Pos' ? 'Connector' : sentiment === 'Neg' ? 'Broadcaster' : 'Neutral';
+}
+
 export function detectCommunities(vertices: Vertex[], edges: Edge[]): void {
   const graph = new Graph({ multi: false, allowSelfLoops: false });
   const vertexById = new Map(vertices.map((vertex) => [vertex.id, vertex]));
@@ -65,7 +69,7 @@ export function detectCommunities(vertices: Vertex[], edges: Edge[]): void {
         const sorted = [...sMap.entries()].sort((a, b) => b[1] - a[1]);
         dominantSent = sorted[0]?.[0] || 'Mixed';
       }
-      const sentLabel = dominantSent === 'Pos' ? 'Positive' : dominantSent === 'Neg' ? 'Negative' : 'Neutral';
+      const sentLabel = structuralLabel(dominantSent);
       v.clusterLabel = `Community ${cid + 1}: ${topNode} (${sentLabel})`;
     }
   } catch {

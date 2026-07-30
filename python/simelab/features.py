@@ -75,6 +75,8 @@ class FeatureEngineer:
     reciprocity is set to 0 and degree is total degree.
     """
 
+    METHOD_VERSION = 2
+
     def __init__(self, G: nx.Graph):
         self.G = G
         self.is_directed = G.is_directed()
@@ -93,14 +95,22 @@ class FeatureEngineer:
 
     def _compute_degree(self) -> np.ndarray:
         """Normalized degree centrality (0-1)."""
-        if self.is_directed:
-            deg_dict = nx.degree_centrality(self.G)
-        else:
-            deg_dict = nx.degree_centrality(self.G)
+        # NodeXL's "Degree" column is commonly a raw degree count, while the
+        # feature contract here is normalized degree centrality.
+        deg_dict = nx.degree_centrality(self.G)
         return np.array([deg_dict.get(node, 0.0) for node in self._nodes])
 
     def _compute_betweenness(self) -> np.ndarray:
         """Normalized betweenness centrality (0-1). Uses k=min(n, 500) sampling for large graphs."""
+        precomputed = self._precomputed("betweenness_centrality")
+        if precomputed is not None:
+            # NodeXL exports may contain raw shortest-path counts. Convert
+            # those to the normalized NetworkX-compatible range expected by
+            # the rest of SIMElab before reusing them.
+            if precomputed.size and float(np.nanmax(precomputed)) > 1.0:
+                denominator = max((self.n - 1) * (self.n - 2), 1)
+                precomputed = precomputed / denominator
+            return np.clip(precomputed, 0.0, 1.0)
         k = min(self.n, 500) if self.n > 500 else None
         bc_dict = nx.betweenness_centrality(
             self.G, k=k, normalized=True, seed=42 if k is not None else None
@@ -109,11 +119,17 @@ class FeatureEngineer:
 
     def _compute_closeness(self) -> np.ndarray:
         """Closeness centrality (Wasserman-Faust normalized)."""
+        precomputed = self._precomputed("closeness_centrality")
+        if precomputed is not None:
+            return precomputed
         cc_dict = nx.closeness_centrality(self.G, wf_improved=True)
         return np.array([cc_dict.get(node, 0.0) for node in self._nodes])
 
     def _compute_eigenvector(self) -> np.ndarray:
         """Eigenvector centrality. Falls back to zeros on convergence failure."""
+        precomputed = self._precomputed("eigenvector_centrality")
+        if precomputed is not None:
+            return precomputed
         try:
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
@@ -130,16 +146,45 @@ class FeatureEngineer:
 
     def _compute_pagerank(self) -> np.ndarray:
         """PageRank (alpha=0.85, max 200 iterations)."""
+        precomputed = self._precomputed("pagerank")
+        if precomputed is not None:
+            return precomputed
         pr_dict = nx.pagerank(self.G, alpha=0.85, max_iter=200)
         return np.array([pr_dict.get(node, 0.0) for node in self._nodes])
 
     def _compute_clustering(self) -> np.ndarray:
         """Watts-Strogatz local clustering coefficient."""
+        precomputed = self._precomputed("clustering_coefficient")
+        if precomputed is not None:
+            return precomputed
         if self.is_directed:
             cc_dict = nx.clustering(self.G.to_undirected())
         else:
             cc_dict = nx.clustering(self.G)
         return np.array([cc_dict.get(node, 0.0) for node in self._nodes])
+
+    def _precomputed(self, attribute: str) -> Optional[np.ndarray]:
+        """Return a complete NodeXL metric column when one is available.
+
+        NodeXL workbooks commonly contain all six expensive centrality columns.
+        Recomputing those columns made large uploads appear stuck in the
+        browser while the backend was doing redundant all-graph work.  A
+        partially populated column is intentionally ignored so CSVs and
+        incomplete exports still use the NetworkX fallbacks consistently.
+        """
+        values = []
+        for node in self._nodes:
+            value = self.G.nodes[node].get(attribute)
+            if value is None:
+                return None
+            try:
+                number = float(value)
+            except (TypeError, ValueError):
+                return None
+            if not np.isfinite(number):
+                return None
+            values.append(number)
+        return np.array(values, dtype=float)
 
     def _compute_reciprocity(self) -> np.ndarray:
         """

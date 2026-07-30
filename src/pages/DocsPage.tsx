@@ -161,7 +161,7 @@ export function DocsPage() {
           <Metric
             name="Polarisation Index"
             formula="(N_pos + N_neg) / N_total"
-            body="Share of accounts sorted into the Positive or Negative clusters, excluding Neutral. High polarisation = few bystanders."
+            body="Share of accounts sorted into the Connector or Broadcaster clusters, excluding Neutral. High polarisation = few bystanders."
             interpretation={[
               ['> 0.8', 'Highly polarised. Almost everyone has taken a side. Only a small fraction remains neutral.'],
               ['0.5–0.8', 'Moderately polarised. A significant neutral contingent exists.'],
@@ -171,7 +171,7 @@ export function DocsPage() {
           <Metric
             name="Centroid Distance"
             formula="|| μ_pos − μ_neg ||"
-            body="Euclidean distance between the Positive and Negative cluster centres in the 9-D normalised feature space. Measures how different the two camps are in their network behaviour."
+            body="Euclidean distance between the Connector and Broadcaster cluster centres in the 9-D normalised feature space. Measures how different the two camps are in their network behaviour."
             interpretation={[
               ['> 3.0', 'Highly polarised AND structurally distinct. The two camps behave very differently in the network. One broadcasts, one connects. Easy to tell apart.'],
               ['1.0–3.0', 'Moderate separation. Some behavioural difference between camps.'],
@@ -181,7 +181,7 @@ export function DocsPage() {
           <div className="border border-ember/30 bg-ember-soft/50 p-5 space-y-2">
             <p className="text-xs font-bold text-ember uppercase tracking-wider">Real example from your data</p>
             <p className="text-sm text-ink-soft leading-relaxed">
-              <strong>Polarisation = 0.968</strong> (97% of accounts are in Pos or Neg camps — only 3% neutral){' '}
+              <strong>Polarisation = 0.968</strong> (97% of accounts are in Connector or Broadcaster camps — only 3% neutral){' '}
               combined with <strong>Centroid Distance = 0.44</strong> (the camps are nearly identical in behaviour){' '}
               means: this is an intensely polarised conversation where <em>both sides play the same network game</em>.
               They broadcast with equal intensity, bridge with equal frequency, and cluster with equal density.

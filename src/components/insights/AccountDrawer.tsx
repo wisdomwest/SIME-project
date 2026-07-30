@@ -7,7 +7,7 @@ import { Drawer } from '../primitives/Drawer';
 import { Chip } from '../primitives/Chip';
 import { Explainer } from '../primitives/StatBlock';
 import { Button } from '../primitives/Button';
-import { formatDate, formatDateISO, formatNumber, initials, parseDate, relativeDate, safeImgUrl, sentimentTone } from '../../app/format';
+import { formatDate, formatDateISO, formatNumber, initials, parseDate, relativeDate, safeImgUrl, sentimentLabel, sentimentTone } from '../../app/format';
 import { ArrowUpRight } from 'lucide-react';
 import { Vertex } from '../../engine/csvParserEnhanced';
 
@@ -142,7 +142,7 @@ function AccountBody({ vertex, datasetId, navigate, computedMetrics, aiInsights 
             {vertex.followers > 0 && ` · ${formatNumber(vertex.followers)} followers`}
           </p>
           <div className="flex flex-wrap gap-1.5 mt-2.5">
-            <Chip tone={sentimentTone(vertex.sentiment)}>{vertex.sentiment}</Chip>
+            <Chip tone={sentimentTone(vertex.sentiment)}>{sentimentLabel(vertex.sentiment)}</Chip>
             <Chip tone={vertex.isBot ? 'neg' : 'pos'}>{vertex.isBot ? `Bot (${Math.round(vertex.botScore * 100)}%)` : 'Organic'}</Chip>
             {vertex.cluster >= 0 && <Chip tone="ghost">C{vertex.cluster + 1}</Chip>}
           </div>

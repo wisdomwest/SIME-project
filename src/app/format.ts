@@ -58,3 +58,10 @@ export function sentimentTone(s: 'Pos' | 'Neu' | 'Neg' | string | undefined): 'p
   if (s === 'Neg' || s === 'Negative') return 'neg';
   return 'neu';
 }
+
+/** User-facing names for structural, non-emotional cluster codes. */
+export function sentimentLabel(s: 'Pos' | 'Neu' | 'Neg' | string | undefined): string {
+  if (s === 'Pos' || s === 'Positive') return 'Connector';
+  if (s === 'Neg' || s === 'Negative') return 'Broadcaster';
+  return 'Neutral';
+}

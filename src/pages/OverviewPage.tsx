@@ -9,7 +9,7 @@ import { DataTable, Column } from '../components/primitives/DataTable';
 import { Button } from '../components/primitives/Button';
 import { NetworkGraph } from '../components/graph/NetworkGraph';
 import { CampaignTimeline } from '../components/insights/CampaignTimeline';
-import { formatNumber, initials, safeImgUrl, sentimentTone } from '../app/format';
+import { formatNumber, initials, safeImgUrl, sentimentLabel, sentimentTone } from '../app/format';
 import { ArrowUpRight } from 'lucide-react';
 import { Vertex } from '../engine/csvParserEnhanced';
 
@@ -198,7 +198,7 @@ export function OverviewPage() {
                     @{c.top?.label || '—'}
                   </span>
                   <Chip tone={sentimentTone(c.domSent) === 'pos' ? 'pos' : sentimentTone(c.domSent) === 'neg' ? 'neg' : 'neu'}>
-                    {c.domSent}
+                    {sentimentLabel(c.domSent)}
                   </Chip>
                   <span className="font-mono text-xs text-ink-mute">{c.size}</span>
                 </button>
@@ -250,7 +250,7 @@ function topColumns(): Column<Vertex>[] {
               </span>
             )}
             <span className="text-ink truncate">@{v.label}</span>
-            <Chip tone={sentimentTone(v.sentiment)}>{v.sentiment}</Chip>
+                  <Chip tone={sentimentTone(v.sentiment)}>{sentimentLabel(v.sentiment)}</Chip>
           </div>
         );
       },
